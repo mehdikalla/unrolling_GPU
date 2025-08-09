@@ -4,6 +4,7 @@ import torch.nn as nn
 from modules.P3MG_func import iter_P3MG_base, iter_P3MG
 
 R = nn.Softplus()
+S = nn.Sigmoid()
 
 # P3MG model layers
 class layer_0(nn.Module):
@@ -19,7 +20,7 @@ class layer_0(nn.Module):
 
     def forward(self, static, dynamic, x, y):
         lmbd  = R(self.lmbd)
-        tau = R(self.PD_tau)
+        tau = S(self.PD_tau)
         x_new, dynamic_new = iter_P3MG_base(static, x, y, lmbd, tau)
         return x_new, dynamic_new
 
@@ -36,7 +37,7 @@ class layer_k(nn.Module):
 
     def forward(self, static, dynamic, x, y):
         lmbd  = R(self.lmbd)
-        tau = R(self.PD_tau)
+        tau = S(self.PD_tau)
         x_new, dynamic_new = iter_P3MG(static, dynamic, x, y, lmbd, tau)
         return x_new, dynamic_new
 
