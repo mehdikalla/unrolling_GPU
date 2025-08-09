@@ -28,9 +28,9 @@ def parse_args():
     p.add_argument("--beta",  type=float, default=1e-5)
     p.add_argument("--eta",   type=float, default=1e-2)
     p.add_argument("--sub",   type=int,   default=1)
-    p.add_argument("--sup",   type=int,   default=10)
+    p.add_argument("--sup",   type=int,   default=50)
     # Entraînement
-    p.add_argument("--epochs",           type=int,   default=10)
+    p.add_argument("--epochs",           type=int,   default=25)
     p.add_argument("--lr",               type=float, default=1e-3)
     p.add_argument("--train_batch_size", type=int,   default=10)
     p.add_argument("--val_batch_size",   type=int,   default=1)

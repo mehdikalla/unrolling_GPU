@@ -186,7 +186,7 @@ class U_P3MG(nn.Module):
                 loss = self.criterion(X_pred, X_true)
                 batch_losses.append(loss.item())
 
-                self.optimizer.zero_grad(set_to_none=True)
+                self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
 
@@ -213,6 +213,7 @@ class U_P3MG(nn.Module):
 
                     static   = init_P3MG(list(self.static_params), X0, Y)
                     X_pred, _ = self.model(static, None, X0, Y)
+                    loss = self.criterion(X_pred, X_true)
                     val_batch_losses.append(self.criterion(X_pred, X_true).item())
 
             val_loss = sum(val_batch_losses) / len(val_batch_losses)
@@ -224,9 +225,13 @@ class U_P3MG(nn.Module):
                 'epoch': epoch,
                 'model_state_dict': self.model.state_dict(),
             }, os.path.join(self.path_save, f'checkpoint_epoch{epoch}.pt'))
+            
+            self.plot_signals(X_true, X_pred, epoch)
 
         # Courbes
         self.plot_losses(train_losses, val_losses)
+        self.plot_stepsizes(os.path.join(self.path_save, f'checkpoint_epoch{self.num_epochs-1}.pt'))
+        print("Training complete. Checkpoints and plots saved.")
         return train_losses, val_losses
 
     def test(self, need_names: bool = False, checkpoint_path: str = None):
@@ -262,20 +267,31 @@ class U_P3MG(nn.Module):
 
     def plot_stepsizes(self, path_model: str):
         """
-        Sauvegarde l'évolution des pas ν_k (Softplus des paramètres `nu`).
+        Sauvegarde l'évolution des pas ν_k (Softplus des paramètres `nu`)
+        et τ_k (Softplus des paramètres `tau`) pour chaque couche.
         """
         checkpoint = torch.load(path_model, map_location=self.device)
         self.model.load_state_dict(checkpoint['model_state_dict'])
 
         # Récupère directement les paramètres des couches
         list_nu = []
+        list_tau = []
         for i, layer in enumerate(self.model.Layers):
             if hasattr(layer, "nu"):
                 val = F.softplus(layer.nu).detach().cpu().numpy()
                 list_nu.append(val)
+            if hasattr(layer, "tau"):
+                val = F.softplus(layer.tau).detach().cpu().numpy()
+                list_tau.append(val)
 
         plt.figure()
         plt.plot(list_nu, marker='o', linestyle='solid', linewidth=0.5)
         plt.ylabel(r'$\nu_k$'); plt.xlabel(r'layer $k$')
         out = os.path.join(os.path.dirname(path_model), "learnt_nu_k.png")
+        plt.savefig(out); plt.close()
+
+        plt.figure()
+        plt.plot(list_tau, marker='o', linestyle='solid', linewidth=0.5)
+        plt.ylabel(r'$\tau_k$'); plt.xlabel(r'layer $k$')
+        out = os.path.join(os.path.dirname(path_model), "learnt_tau_k.png")
         plt.savefig(out); plt.close()
