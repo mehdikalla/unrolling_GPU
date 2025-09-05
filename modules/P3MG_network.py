@@ -254,7 +254,7 @@ class U_P3MG(nn.Module):
                     sumY = Y.sum(dim=1, keepdim=True)
                     X0   = sumY.repeat(1, self.N) / (self.M * self.N)
 
-                static   = static = self.p3mg_tmp.init_P3MG(list(self.static_params), X0, Y)*
+                static   = static = self.p3mg_tmp.init_P3MG(list(self.static_params), X0, Y)
                 X_pred, _ = self.model(static, None, X0, Y)
                 test_losses.append(self.criterion(X_pred, X_true).item())
 
