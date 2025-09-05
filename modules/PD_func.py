@@ -1,7 +1,7 @@
 # p3mg_classes.py
 import torch as tc
 import torch.nn as nn
-from modules.P3MG_utils import*
+from modules.utils import*
 
 
 class PrimalDualNet(nn.Module):
@@ -10,7 +10,7 @@ class PrimalDualNet(nn.Module):
 
     def init_PD(self, sub_static_input):
         """
-        (même nom, même signature)
+        Initialisation des variables et calculs préliminaires pour le primal-dual.
         """
         xb, D, B, grad, sub, sup, P, N, tau = sub_static_input
 
@@ -43,7 +43,7 @@ class PrimalDualNet(nn.Module):
 
     def iter_PD(self, sub_static, u_new, tau):
         """
-        (même nom, même signature)
+        Itération générique du modèle Primal-Dual
         """
         xb, grad, P, D, inv_eyemu, gamma, delta = sub_static
         un, vn = u_new

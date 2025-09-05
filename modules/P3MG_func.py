@@ -1,7 +1,7 @@
 # modules/P3MG_func.py
 import torch as tc
 import torch.nn as nn
-from modules.P3MG_utils import*
+from modules.utils import*
 from modules.PD_model import PD_model, PDInit_layer
 
 class P3MGNet(nn.Module):
