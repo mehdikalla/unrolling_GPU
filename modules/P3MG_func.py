@@ -2,7 +2,6 @@
 import torch as tc
 import torch.nn as nn
 from modules.P3MG_utils import*
-# IMPORTANT: on utilise le modèle PD (pas la classe PrimalDualNet)
 from modules.PD_model import PD_model, PDInit_layer
 
 class P3MGNet(nn.Module):

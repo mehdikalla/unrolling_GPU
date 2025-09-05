@@ -1,5 +1,5 @@
 import torch as tc
-from modules.P3MG_utils import *
+from modules.utils import *
 
 def primal_dual(xb, D, B, grad, sub, sup, P, N, tau):
     """
