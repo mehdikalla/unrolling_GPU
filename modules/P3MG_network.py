@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 from modules.module import MyDataset
 from modules.P3MG_model import P3MG_model
-from modules.P3MG_func import init_P3MG
+from modules.P3MG_func import P3MGNet
 import torch.nn.functional as F
 
 
@@ -27,6 +27,8 @@ class U_P3MG(nn.Module):
         if initial_x0 is not None and not isinstance(initial_x0, torch.Tensor):
             initial_x0 = torch.from_numpy(initial_x0)
         self.initial_x0    = initial_x0.double() if initial_x0 is not None else None
+        self.p3mg_tmp = P3MGNet().to(self.device).double()
+        
 
         # 2) Hyper-paramètres d'entraînement
         (self.num_epochs,
@@ -53,6 +55,7 @@ class U_P3MG(nn.Module):
         self.test_loader  = None
         self.optimizer    = None
         self.scheduler    = None
+
 
     def create_loaders(self, need_names: bool = False):
         """
@@ -140,7 +143,6 @@ class U_P3MG(nn.Module):
     def train(self, need_names: bool = False, checkpoint_path: str = None):
         # Loaders + dimensions N/M
         self.create_loaders(need_names)
-
         # Optimizer
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
 
@@ -174,7 +176,7 @@ class U_P3MG(nn.Module):
                     X0   = sumY.repeat(1, self.N) / (self.M * self.N)
 
                 # Forward statique
-                static = init_P3MG(list(self.static_params), X0, Y)
+                static = self.p3mg_tmp.init_P3MG(list(self.static_params), X0, Y)
 
                 # Forward réseau
                 X_pred, _ = self.model(static, None, X0, Y)
@@ -211,7 +213,7 @@ class U_P3MG(nn.Module):
                         sumY = Y.sum(dim=1, keepdim=True)
                         X0   = sumY.repeat(1, self.N) / (self.M * self.N)
 
-                    static   = init_P3MG(list(self.static_params), X0, Y)
+                    static = self.p3mg_tmp.init_P3MG(list(self.static_params), X0, Y)
                     X_pred, _ = self.model(static, None, X0, Y)
                     val_batch_losses.append(self.criterion(X_pred, X_true).item())
 
@@ -252,7 +254,7 @@ class U_P3MG(nn.Module):
                     sumY = Y.sum(dim=1, keepdim=True)
                     X0   = sumY.repeat(1, self.N) / (self.M * self.N)
 
-                static   = init_P3MG(list(self.static_params), X0, Y)
+                static   = static = self.p3mg_tmp.init_P3MG(list(self.static_params), X0, Y)*
                 X_pred, _ = self.model(static, None, X0, Y)
                 test_losses.append(self.criterion(X_pred, X_true).item())
 

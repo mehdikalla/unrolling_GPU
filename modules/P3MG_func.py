@@ -1,243 +1,221 @@
+# modules/P3MG_func.py
 import torch as tc
-from modules.P3MG_utils import *
+import torch.nn as nn
+from modules.P3MG_utils import*
+# IMPORTANT: on utilise le modèle PD (pas la classe PrimalDualNet)
+from modules.PD_model import PD_model, PDInit_layer
 
-def primal_dual(xb, D, B, grad, sub, sup, P, N, tau):
-    """
-    Batch version of the primal-dual update with per-sample directional matrices.
-    
-    Inputs:
-      xb:   tensor of shape (P, N) – signal (after projection)
-      D:    tensor of shape (P, L, N) – directional matrices per sample
-      B:    tensor of shape (P, L, L) – corresponding B matrices per sample
-      grad: tensor of shape (P, N)
-      sub, sup: scalar parameters for the inner loop
-    
-    Returns:
-      x:  updated signal tensor of shape (P, N)
-      dx: applied update, tensor of shape (P, N)
-    """
-    device = xb.device
-    dtype  = xb.dtype
+class P3MGNet(nn.Module):
+    def __init__(self, num_pd_layers: int = 3):
+        """
+        num_pd_layers : nombre d'itérations (couches) du modèle primal-dual utilisé à l'intérieur de P3MG.
+        """
+        super().__init__()
+        self.pd_init = PDInit_layer()
+        self.pd_model = PD_model(num_layers=num_pd_layers)
 
-    # Tout sur le même device
-    D    = D.to(device)
-    B    = B.to(device)
-    grad = grad.to(device)
+    # -------------------------
+    # init_P3MG (inchangée)
+    # -------------------------
+    def init_P3MG(self, static_input, x0, y):
+        """
+        Étape 0 : Initialisation, chargement des données, définition des variables
+        et calculs préliminaires.
+        """
+        P, N, M = x0.size(0), x0.size(1), y.size(1)
+        alpha, beta, eta, sub, sup = static_input
 
-    L = D.size(1)  # lmbdmber of directions per sample
+        # génération de Hmat sur CPU
+        T, Hmat = dosy_mat(
+            int(N),   # nombre de D-values
+            int(M),   # nombre de points temporels
+            0,        # tmin
+            1.5,      # tmax
+            1,        # Dmin
+            1000,     # Dmax
+            dtype=x0.dtype
+        )
 
-    # Symmetrize B per sample
-    B = 0.5 * (B + B.transpose(1, 2))  # (P, L, L)
+        # Constantes
+        Cg2    = 9 / (N * 8 * eta**2)
+        Hnorm2 = tc.norm(Hmat, 2) ** 2
+        gamma  = 1.9
 
-    # Initialize dual variables per sample (direct GPU alloc)
-    un = tc.zeros((P, L), dtype=dtype, device=device)
-    vn = tc.zeros((P, N), dtype=dtype, device=device)
+        # SVD préconditionnement
+        rankprec = 10
+        Uprec, Sprec, VprecT = tc.linalg.svd(Hmat, full_matrices=False)
+        Vprec    = VprecT.t()[:, :rankprec]          # (N, r)
+        Sprec    = Sprec[:rankprec]                   # (r,)
+        Sprec_2  = 1.0 / (Sprec ** 2)                 # (r,)
 
-    # 1) Calcul de la norme ℓ₂ par échantillon (sur L*N)
-    norm_D = tc.norm(D.reshape(P, -1), p=2, dim=1)  # (P,)
+        return Hmat, alpha, beta, eta, sub, sup, gamma, Cg2, Vprec, Sprec_2, Hnorm2
 
-    # 2) delta et gamma sont des vecteurs (P,)
-    delta = 1.0 / norm_D
-    gamma = 1.0 / norm_D
+    # --------------------------------
+    # iter_P3MG_base (utilise PD_model)
+    # --------------------------------
+    def iter_P3MG_base(self, static, x, y, lmbd, tau):
+        """
+        Première itération P3MG.
+        NOTE: on appelle le *modèle* PD (PDInit_layer + PD_model) et non la classe PrimalDualNet.
+        """
+        P, N, M = x.size(0), x.size(1), y.size(1)
+        Hmat, alpha, beta, eta, sub, sup, gamma, Cg2, Vprec, Sprec_2, Hnorm2 = static
 
-    # 3) Pré-calcul de (I + δ B)^{-1}
-    eye = tc.eye(L, dtype=dtype, device=device).unsqueeze(0).expand(P, L, L)
-    eyemu = eye + delta.view(P, 1, 1) * B            # (P, L, L)
-    inv_eyemu = tc.linalg.inv(eyemu)                 # (P, L, L)
+        LipsMaj = lmbd * (1 / (alpha * beta) + Cg2) + Hnorm2
 
-    # Boucle interne
-    for _ in range(sub, sup + 1):
-        # u = un - μ * (vn @ D^T)
-        u = un - delta.view(P, 1) * tc.bmm(vn.unsqueeze(1), D.transpose(1, 2)).squeeze(1)  # (P,L)
+        device = x.device
+        dtype  = x.dtype
 
-        # prox step
-        temp = tc.bmm(grad.unsqueeze(1), D.transpose(1, 2)).squeeze(1)  # (P,L)
-        pn   = u - delta.view(P, 1) * temp                               # (P,L)
-        pn   = tc.bmm(pn.unsqueeze(1), inv_eyemu).squeeze(1)             # (P,L)
+        # Statics -> device
+        Hmat    = Hmat.to(device=device, dtype=dtype)
+        Vprec   = Vprec.to(device=device, dtype=dtype)
+        Sprec_2 = Sprec_2.to(device=device, dtype=dtype)
 
-        # v update avec ν broadcasté sur (P,N)
-        v  = vn + gamma.view(P, 1) * tc.bmm((2 * pn - un).unsqueeze(1), D).squeeze(1)  # (P,N)
-        qn = v + gamma.view(P, 1) * xb - gamma.view(P, 1) * proj_simplex(v / gamma.view(P, 1) + xb)
+        # Gradient
+        gradx, l1 = gradient_x(x, y, Hmat, alpha, beta, eta, lmbd)
 
-        un = un + tau * (pn - un)
-        vn = vn + tau * (qn - vn)
+        # Pas de descente + projection
+        forward = x - (gamma / LipsMaj) * gradx
+        xb      = proj_simplex(forward)
+        Pgradx  = xb - x
 
-    dx = tc.bmm(un.unsqueeze(1), D).squeeze(1)  # (P, N)
-    x = xb + dx
-    return x, dx
+        gradxb, l1b = gradient_x(xb, y, Hmat, alpha, beta, eta, lmbd)
 
+        # Sous-espace (itération 1)
+        Dx_list = []
+        subspace_iter1 = [1, 0]
+        if subspace_iter1[0]:
+            Dx_list.append(Pgradx)
+        if subspace_iter1[1]:
+            # Majorant diagonal (batch)
+            Adiag0     = majorante_x_diag(x, alpha, l1, beta, Cg2, lmbd, 0)   # (P, N)
+            Delta_inv  = 1.0 / Adiag0                                       # (P, N)
+            Vprec_T    = Vprec.t().unsqueeze(0).expand(P, -1, -1)           # (P, r, N)
+            weighted_V = Vprec_T * Delta_inv.unsqueeze(1)                   # (P, r, N)
+            temp_batch = tc.bmm(weighted_V, Vprec.unsqueeze(0).expand(P, -1, -1))  # (P, r, r)
+            diag_S     = tc.diag_embed(Sprec_2).unsqueeze(0).expand(P, -1, -1)     # (P, r, r)
+            temp       = diag_S + temp_batch                                 # (P, r, r)
 
-def init_P3MG(static_input, x0, y):
-    """
-    Étape 0 : Initialisation, chargement des données, définition des variables
-    et calculs préliminaires.
+            # Préconditionnement du gradient
+            Prec_gradx = Delta_inv * gradx                                   # (P, N)
+            temp_vec   = tc.matmul(Prec_gradx, Vprec)                         # (P, r)
+            sol        = tc.linalg.solve(temp, temp_vec.unsqueeze(-1)).squeeze(-1) # (P, r)
+            correction = tc.bmm(Vprec.unsqueeze(0).expand(P, -1, -1), sol.unsqueeze(-1)).squeeze(-1)  # (P,N)
+            Prec_gradx = Prec_gradx - Delta_inv * correction
 
-    Entrées :
-      static_input : list/tuple (alpha, beta, eta, sub, sup)
-      x0           : (P, N)
-      y            : (P, M)
+            temp_x     = x - Prec_gradx
+            proj_temp  = proj_simplex(temp_x)
+            PgradxP    = proj_temp - x
+            Dx_list.append(PgradxP)
 
-    Renvoie :
-      (Hmat, alpha, beta, eta, sub, sup, gamma, Cg2, Vprec, Sprec_2, Hnorm2)
-    """
-    P, N, M = x0.size(0), x0.size(1), y.size(1)
+        if len(Dx_list) == 0:
+            Dx_list.append(Pgradx)
 
-    alpha, beta, eta, sub, sup = static_input
+        Dx = tc.stack(Dx_list, dim=1)  # (P, L, N)
 
-    # génération de Hmat sur CPU (on le passera au GPU dans iter_*)
-    T, Hmat = dosy_mat(
-        int(N),   # nombre de D-values
-        int(M),   # nombre de points temporels
-        0,        # tmin
-        1.5,      # tmax
-        1,        # Dmin
-        1000,     # Dmax
-        dtype=x0.dtype
-    )
+        # Bx "placeholder" (comme dans ta version d’origine)
+        Ad = tc.zeros((P, Dx.size(1), N), dtype=dtype, device=device)
+        Bx = tc.bmm(Dx, Ad.transpose(1, 2))  # (P, L, L)
 
-    # Constantes
-    Cg2    = 9 / (N * 8 * eta**2)
-    Hnorm2 = tc.norm(Hmat, 2) ** 2
-    gamma  = 1.9
+        # --------- Appel du MODÈLE PD ---------
+        # Construire l'input attendu par init_PD: [xb, D, B, grad, sub, sup, P, N, tau]
+        # NB: tau passé ici n'est pas utilisé par init_PD ; le PD_model apprendra ses propres τ via Softplus
+        tau_dummy = tc.zeros((), dtype=dtype, device=device)
+        sub_static_input = [xb, Dx, Bx, gradxb, sub, sup, P, N, tau_dummy]
 
-    # SVD préconditionnement (CPU puis transfert à la demande)
-    rankprec = 10
-    Uprec, Sprec, VprecT = tc.linalg.svd(Hmat, full_matrices=False)
-    Vprec    = VprecT.t()[:, :rankprec]          # (N, r)
-    Sprec    = Sprec[:rankprec]                   # (r,)
-    Sprec_2  = 1.0 / (Sprec ** 2)                 # (r,)
+        # 1) init via PDInit_layer
+        u0, sub_static = self.pd_init(sub_static_input)     # u0 = [un, vn]
 
-    return Hmat, alpha, beta, eta, sub, sup, gamma, Cg2, Vprec, Sprec_2, Hnorm2
+        # 2) unrolling PD via PD_model (utilise ses τ internes)
+        u_final = self.pd_model(sub_static, u0)             # [un, vn] après K couches
+        un, vn = u_final
 
+        # 3) reconstruire dx et x
+        dx_new = tc.bmm(un.unsqueeze(1), Dx).squeeze(1)     # (P, N)
+        x_new  = xb + dx_new
 
-def iter_P3MG_base(static, x, y, lmbd, tau):
-    """
-    Première itération P3MG.
-    """
-    P, N, M = x.size(0), x.size(1), y.size(1)
+        dynamic = [dx_new, Pgradx]
+        return x_new, dynamic
 
-    Hmat, alpha, beta, eta, sub, sup, gamma, Cg2, Vprec, Sprec_2, Hnorm2 = static
+    # -----------------------------
+    # iter_P3MG (utilise PD_model)
+    # -----------------------------
+    def iter_P3MG(self, static, dynamic, x, y, lmbd, tau):
+        """
+        Itérations P3MG génériques (k>1).
+        NOTE: on appelle le *modèle* PD (PDInit_layer + PD_model) et non la classe PrimalDualNet.
+        """
+        P, N, M = x.size(0), x.size(1), y.size(1)
 
-    LipsMaj = lmbd * (1 / (alpha * beta) + Cg2) + Hnorm2
+        Hmat, alpha, beta, eta, sub, sup, gamma, Cg2, Vprec, Sprec_2, Hnorm2 = static
+        LipsMaj = lmbd * (1 / (alpha * beta) + Cg2) + Hnorm2
+        dx_old, Pgradx_old = dynamic
 
-    device = x.device
-    dtype  = x.dtype
+        device = x.device
+        dtype  = x.dtype
 
-    # Statics -> device
-    Hmat    = Hmat.to(device=device, dtype=dtype)
-    Vprec   = Vprec.to(device=device, dtype=dtype)
-    Sprec_2 = Sprec_2.to(device=device, dtype=dtype)
+        # Statics -> device
+        Hmat    = Hmat.to(device=device, dtype=dtype)
+        Vprec   = Vprec.to(device=device, dtype=dtype)
+        Sprec_2 = Sprec_2.to(device=device, dtype=dtype)
 
-    # Gradient
-    gradx, l1 = gradient_x(x, y, Hmat, alpha, beta, eta, lmbd)
+        # Gradient et projection
+        gradx, l1 = gradient_x(x, y, Hmat, alpha, beta, eta, lmbd)
+        fwd  = x - (gamma / LipsMaj) * gradx
+        xb   = proj_simplex(fwd)
+        Pgradx = xb - x
+        gradxb, l1b = gradient_x(xb, y, Hmat, alpha, beta, eta, lmbd)
 
-    # Pas de descente + projection
-    forward = x - (gamma / LipsMaj) * gradx
-    xb      = proj_simplex(forward)
-    Pgradx  = xb - x
+        # Sous-espace (général)
+        Dx_list = []
+        subspace_gen = [1, 1, 1, 1]
+        if subspace_gen[0]:
+            Dx_list.append(Pgradx)
+        if subspace_gen[1]:
+            Adiag0     = majorante_x_diag(x, alpha, l1, beta, Cg2, lmbd, 0)
+            Delta_inv  = 1.0 / Adiag0
+            Vprec_T    = Vprec.t().unsqueeze(0).expand(P, -1, -1)
+            weighted_V = Vprec_T * Delta_inv.unsqueeze(1)
+            temp_batch = tc.bmm(weighted_V, Vprec.unsqueeze(0).expand(P, -1, -1))
+            diag_S     = tc.diag_embed(Sprec_2).unsqueeze(0).expand(P, -1, -1)
+            temp       = diag_S + temp_batch
+            Prec_gradx = Delta_inv * gradx
+            temp_vec   = tc.matmul(Prec_gradx, Vprec)
+            sol        = tc.linalg.solve(temp, temp_vec.unsqueeze(-1)).squeeze(-1)
+            correction = tc.bmm(Vprec.unsqueeze(0).expand(P, -1, -1), sol.unsqueeze(-1)).squeeze(-1)
+            Prec_gradx = Prec_gradx - Delta_inv * correction
+            temp_x     = x - Prec_gradx
+            proj_temp  = proj_simplex(temp_x)
+            PgradxP    = proj_temp - x
+            Dx_list.append(PgradxP)
+        if subspace_gen[2]:
+            Dx_list.append(dx_old)
+        if subspace_gen[3]:
+            Dx_list.append(Pgradx_old)
 
-    gradxb, l1b = gradient_x(xb, y, Hmat, alpha, beta, eta, lmbd)
+        if len(Dx_list) == 0:
+            Dx_list.append(Pgradx)
 
-    # Sous-espace (itération 1)
-    Dx_list = []
-    subspace_iter1 = [1, 0]
-    if subspace_iter1[0]:
-        Dx_list.append(Pgradx)
-    if subspace_iter1[1]:
-        # Majorant diagonal (batch)
-        Adiag0     = majorante_x_diag(x, alpha, l1, beta, Cg2, lmbd, 0)   # (P, N)
-        Delta_inv  = 1.0 / Adiag0                                       # (P, N)
-        Vprec_T    = Vprec.t().unsqueeze(0).expand(P, -1, -1)           # (P, r, N)
-        weighted_V = Vprec_T * Delta_inv.unsqueeze(1)                   # (P, r, N)
-        temp_batch = tc.bmm(weighted_V, Vprec.unsqueeze(0).expand(P, -1, -1))  # (P, r, r)
-        diag_S     = tc.diag_embed(Sprec_2).unsqueeze(0).expand(P, -1, -1)     # (P, r, r)
-        temp       = diag_S + temp_batch                                 # (P, r, r)
+        Dx = tc.stack(Dx_list, dim=1)  # (P, L, N)
 
-        # Préconditionnement du gradient
-        Prec_gradx = Delta_inv * gradx                                   # (P, N)
-        temp_vec   = tc.matmul(Prec_gradx, Vprec)                         # (P, r)
-        sol        = tc.linalg.solve(temp, temp_vec.unsqueeze(-1)).squeeze(-1) # (P, r)
-        correction = tc.bmm(Vprec.unsqueeze(0).expand(P, -1, -1), sol.unsqueeze(-1)).squeeze(-1)  # (P,N)
-        Prec_gradx = Prec_gradx - Delta_inv * correction
+        # Bx "placeholder" (comme dans la version d’origine)
+        Ad = tc.zeros((P, Dx.size(1), N), dtype=dtype, device=device)
+        Bx = tc.bmm(Dx, Ad.transpose(1, 2))  # (P, L, L)
 
-        temp_x     = x - Prec_gradx
-        proj_temp  = proj_simplex(temp_x)
-        PgradxP    = proj_temp - x
-        Dx_list.append(PgradxP)
+        # --------- Appel du MODÈLE PD ---------
+        tau_dummy = tc.zeros((), dtype=dtype, device=device)
+        sub_static_input = [xb, Dx, Bx, gradxb, sub, sup, P, N, tau_dummy]
 
-    if len(Dx_list) == 0:
-        Dx_list.append(Pgradx)
+        # 1) init via PDInit_layer
+        u0, sub_static = self.pd_init(sub_static_input)     # [un, vn]
 
-    Dx = tc.stack(Dx_list, dim=1)  # (P, L, N)
-    Ad = tc.zeros((P, Dx.size(1), N), dtype=dtype, device=device)
-    Bx = tc.bmm(Dx, Ad.transpose(1, 2))  # (P, L, L) — ici lmbdl (comme dans la version d’origine)
+        # 2) unrolling PD via PD_model
+        u_final = self.pd_model(sub_static, u0)             # [un, vn]
+        un, vn = u_final
 
-    x_new, dx_new = primal_dual(xb, Dx, Bx, gradxb, sub, sup, P, N, tau)
+        # 3) reconstruire dx et x
+        dx_new = tc.bmm(un.unsqueeze(1), Dx).squeeze(1)     # (P, N)
+        x_new  = xb + dx_new
 
-    dynamic = [dx_new, Pgradx]
-    return x_new, dynamic
-
-
-def iter_P3MG(static, dynamic, x, y, lmbd, tau):
-    """
-    Itérations P3MG génériques (k>1).
-    """
-    P, N, M = x.size(0), x.size(1), y.size(1)
-
-    Hmat, alpha, beta, eta, sub, sup, gamma, Cg2, Vprec, Sprec_2, Hnorm2 = static
-    LipsMaj = lmbd * (1 / (alpha * beta) + Cg2) + Hnorm2
-    dx_old, Pgradx_old = dynamic
-
-    device = x.device
-    dtype  = x.dtype
-
-    # Statics -> device
-    Hmat    = Hmat.to(device=device, dtype=dtype)
-    Vprec   = Vprec.to(device=device, dtype=dtype)
-    Sprec_2 = Sprec_2.to(device=device, dtype=dtype)
-
-    # Gradient et projection
-    gradx, l1 = gradient_x(x, y, Hmat, alpha, beta, eta, lmbd)
-    fwd  = x - (gamma / LipsMaj) * gradx
-    xb   = proj_simplex(fwd)
-    Pgradx = xb - x
-    gradxb, l1b = gradient_x(xb, y, Hmat, alpha, beta, eta, lmbd)
-
-    # Sous-espace (général)
-    Dx_list = []
-    subspace_gen = [1, 1, 1, 1]
-    if subspace_gen[0]:
-        Dx_list.append(Pgradx)
-    if subspace_gen[1]:
-        Adiag0     = majorante_x_diag(x, alpha, l1, beta, Cg2, lmbd, 0)
-        Delta_inv  = 1.0 / Adiag0
-        Vprec_T    = Vprec.t().unsqueeze(0).expand(P, -1, -1)
-        weighted_V = Vprec_T * Delta_inv.unsqueeze(1)
-        temp_batch = tc.bmm(weighted_V, Vprec.unsqueeze(0).expand(P, -1, -1))
-        diag_S     = tc.diag_embed(Sprec_2).unsqueeze(0).expand(P, -1, -1)
-        temp       = diag_S + temp_batch
-        Prec_gradx = Delta_inv * gradx
-        temp_vec   = tc.matmul(Prec_gradx, Vprec)
-        sol        = tc.linalg.solve(temp, temp_vec.unsqueeze(-1)).squeeze(-1)
-        correction = tc.bmm(Vprec.unsqueeze(0).expand(P, -1, -1), sol.unsqueeze(-1)).squeeze(-1)
-        Prec_gradx = Prec_gradx - Delta_inv * correction
-        temp_x     = x - Prec_gradx
-        proj_temp  = proj_simplex(temp_x)
-        PgradxP    = proj_temp - x
-        Dx_list.append(PgradxP)
-    if subspace_gen[2]:
-        Dx_list.append(dx_old)
-    if subspace_gen[3]:
-        Dx_list.append(Pgradx_old)
-
-    if len(Dx_list) == 0:
-        Dx_list.append(Pgradx)
-
-    Dx = tc.stack(Dx_list, dim=1)  # (P, L, N)
-    Ad = tc.zeros((P, Dx.size(1), N), dtype=dtype, device=device)
-    Bx = tc.bmm(Dx, Ad.transpose(1, 2))  # (P, L, L) — lmbdl comme dans la version d’origine
-
-    x_new, dx_new = primal_dual(xb, Dx, Bx, gradxb, sub, sup, P, N, tau)
-
-    dynamic_new = [dx_new, Pgradx]
-    return x_new, dynamic_new
+        dynamic_new = [dx_new, Pgradx]
+        return x_new, dynamic_new
