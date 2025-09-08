@@ -14,6 +14,7 @@ class U_P3MG(nn.Module):
     def __init__(
         self,
         num_layers: int,
+        num_pd_layers: int,
         static_params: tuple,
         initial_x0: torch.Tensor,
         train_params: tuple,
@@ -23,6 +24,7 @@ class U_P3MG(nn.Module):
         super().__init__()
         # 1) Paramètres du modèle
         self.num_layers    = num_layers
+        self.num_pd_layers = num_pd_layers
         self.static_params = static_params
         if initial_x0 is not None and not isinstance(initial_x0, torch.Tensor):
             initial_x0 = torch.from_numpy(initial_x0)
@@ -46,7 +48,7 @@ class U_P3MG(nn.Module):
 
         # 4) Device, modèle et loss
         self.device    = torch.device(device if torch.cuda.is_available() else "cpu")
-        self.model     = P3MG_model(self.num_layers).to(self.device).double()
+        self.model     = P3MG_model(self.num_layers, self.num_pd_layers).to(self.device).double()
         self.criterion = nn.MSELoss(reduction="mean")
 
         # 5) Placeholders

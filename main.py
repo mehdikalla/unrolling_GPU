@@ -22,6 +22,7 @@ def parse_args():
 
     # Modèle
     p.add_argument("--number_layers", type=int, default=16)
+    p.add_argument("--number_pd_layers", type=int, default=3)
 
     # Paramètres statiques P3MG
     p.add_argument("--alpha", type=float, default=1e-5)

@@ -2,7 +2,8 @@
 import torch as tc
 import torch.nn as nn
 from modules.utils import*
-from modules.PD_model import PD_model, PDInit_layer
+from modules.PD_func import PrimalDualNet
+from modules.PD_model import PD_model
 
 class P3MGNet(nn.Module):
     def __init__(self, num_pd_layers: int = 3):
@@ -10,7 +11,7 @@ class P3MGNet(nn.Module):
         num_pd_layers : nombre d'itérations (couches) du modèle primal-dual utilisé à l'intérieur de P3MG.
         """
         super().__init__()
-        self.pd_init = PDInit_layer()
+        self.pd_net = PrimalDualNet()
         self.pd_model = PD_model(num_layers=num_pd_layers)
 
     # -------------------------
@@ -123,7 +124,7 @@ class P3MGNet(nn.Module):
         sub_static_input = [xb, Dx, Bx, gradxb, sub, sup, P, N, tau_dummy]
 
         # 1) init via PDInit_layer
-        u0, sub_static = self.pd_init(sub_static_input)     # u0 = [un, vn]
+        u0, sub_static = self.pd_net.init_PD(sub_static_input)     # u0 = [un, vn]
 
         # 2) unrolling PD via PD_model (utilise ses τ internes)
         u_final = self.pd_model(sub_static, u0)             # [un, vn] après K couches
@@ -206,7 +207,7 @@ class P3MGNet(nn.Module):
         sub_static_input = [xb, Dx, Bx, gradxb, sub, sup, P, N, tau_dummy]
 
         # 1) init via PDInit_layer
-        u0, sub_static = self.pd_init(sub_static_input)     # [un, vn]
+        u0, sub_static = self.pd_net.init_PD(sub_static_input)     # [un, vn]
 
         # 2) unrolling PD via PD_model
         u_final = self.pd_model(sub_static, u0)             # [un, vn]
