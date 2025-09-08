@@ -26,8 +26,14 @@ class Max:
         self.axis = axis
 
     def prox(self, x: tc.Tensor, gamma: Union[float, tc.Tensor] = 1.0) -> tc.Tensor:
-        # Ensure gamma is a torch tensor.
-        scale = tc.tensor(gamma, dtype=x.dtype, device=x.device) if not isinstance(gamma, tc.Tensor) else gamma
+        # --- FIX MINIMAL: forcer gamma/scale sur le même device/dtype que x,
+        #     même si gamma est déjà un Tensor (ex: Simplex(eta=1) sur CPU) ---
+        if isinstance(gamma, tc.Tensor):
+            scale = gamma.to(dtype=x.dtype, device=x.device)
+        else:
+            scale = tc.tensor(gamma, dtype=x.dtype, device=x.device)
+        # ---------------------------------------------------------------------
+
         self._check(x, scale)
         axis = self.axis
         sz = x.shape
@@ -160,6 +166,7 @@ class Simplex:
 
     # Proximal operator (i.e. projection on the simplex)
     def prox(self, x: tc.Tensor) -> tc.Tensor:
+        # NB: Max.prox gère déjà le cast device/dtype de gamma → rien d'autre à changer ici.
         return x - Max(self.axis).prox(x, self.eta)
 
     # Indicator of the simplex
@@ -369,3 +376,4 @@ def dosy_mat(N, M, tmin, tmax, Dmin, Dmax, dtype=tc.float64, device='cpu'):
     # Exponential decay for DOSY.
     Hmat = tc.exp(-kron_t_T)
     return T, Hmat
+

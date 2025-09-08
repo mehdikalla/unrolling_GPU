@@ -21,8 +21,8 @@ def parse_args():
     p.add_argument("--test",  type=str, default="test.pt")
 
     # Modèle
-    p.add_argument("--number_layers", type=int, default=16)
-    p.add_argument("--number_pd_layers", type=int, default=3)
+    p.add_argument("--number_layers", type=int, default=5)
+    p.add_argument("--number_pd_layers", type=int, default=5)
 
     # Paramètres statiques P3MG
     p.add_argument("--alpha", type=float, default=1e-5)
@@ -91,6 +91,7 @@ def main():
 
     manager = U_P3MG(
         num_layers=args.number_layers,
+        num_pd_layers=args.number_pd_layers,
         static_params=static_params,
         initial_x0=initial_x0,
         train_params=train_params,

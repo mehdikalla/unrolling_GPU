@@ -20,7 +20,7 @@ class PD_layer(nn.Module):
 
     def forward(self, sub_static, u_new):
         tau = R(self.PD_tau)
-        u_new = self.pd.iterPD(sub_static, u_new, tau)
+        u_new = self.pd.iter_PD(sub_static, u_new, tau)
         return u_new
 
 

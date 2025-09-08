@@ -22,7 +22,20 @@ class U_P3MG(nn.Module):
         device: str = "cuda"
     ):
         super().__init__()
-        # 1) Paramètres du modèle
+
+        # 1) Normaliser le device en premier
+        if isinstance(device, str):
+            if device.startswith("cuda") and torch.cuda.is_available():
+                self.device = torch.device(device)
+            else:
+                self.device = torch.device("cpu")
+        elif isinstance(device, torch.device):
+            self.device = device
+        else:
+            self.device = torch.device("cpu")
+
+
+        # 2) Paramètres du modèle
         self.num_layers    = num_layers
         self.num_pd_layers = num_pd_layers
         self.static_params = static_params
@@ -32,26 +45,26 @@ class U_P3MG(nn.Module):
         self.p3mg_tmp = P3MGNet().to(self.device).double()
         
 
-        # 2) Hyper-paramètres d'entraînement
+        # 3) Hyper-paramètres d'entraînement
         (self.num_epochs,
          self.lr,
          self.train_bs,
          self.val_bs,
          self.test_bs) = train_params
 
-        # 3) Chemins Dataset et sauvegarde
+        # 4) Chemins Dataset et sauvegarde
         (self.path_train,
          self.path_val,
          self.path_test,
          self.path_save) = paths
         os.makedirs(self.path_save, exist_ok=True)
 
-        # 4) Device, modèle et loss
+        # 5) Device, modèle et loss
         self.device    = torch.device(device if torch.cuda.is_available() else "cpu")
         self.model     = P3MG_model(self.num_layers, self.num_pd_layers).to(self.device).double()
         self.criterion = nn.MSELoss(reduction="mean")
 
-        # 5) Placeholders
+        # 6) Placeholders
         self.train_loader = None
         self.val_loader   = None
         self.test_loader  = None
