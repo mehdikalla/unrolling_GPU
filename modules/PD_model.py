@@ -16,11 +16,13 @@ class PD_layer(nn.Module):
     def __init__(self):
         super().__init__()
         self.PD_tau = nn.Parameter(torch.DoubleTensor([0.5]), requires_grad=True)
+        self.PD_w_d = nn.Parameter(torch.DoubleTensor([1.0]), requires_grad=True)
         self.pd = PrimalDualNet()
 
     def forward(self, sub_static, u_new):
         tau = R(self.PD_tau)
-        u_new = self.pd.iter_PD(sub_static, u_new, tau)
+        w_d = R(self.PD_w_d)
+        u_new = self.pd.iter_PD(sub_static, u_new, tau, w_d)
         return u_new
 
 

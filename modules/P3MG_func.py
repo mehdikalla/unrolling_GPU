@@ -12,8 +12,7 @@ class P3MGNet(nn.Module):
         """
         super().__init__()
         self.pd_net = PrimalDualNet()
-        self.pd_model = PD_model(num_layers=num_pd_layers)
-
+        self.pd_model = PD_model(num_pd_layers)
     # -------------------------
     # init_P3MG (inchangée)
     # -------------------------
@@ -53,7 +52,7 @@ class P3MGNet(nn.Module):
     # --------------------------------
     # iter_P3MG_base (utilise PD_model)
     # --------------------------------
-    def iter_P3MG_base(self, static, x, y, lmbd, tau):
+    def iter_P3MG_base(self, static, x, y, lmbd):
         """
         Première itération P3MG.
         NOTE: on appelle le *modèle* PD (PDInit_layer + PD_model) et non la classe PrimalDualNet.
@@ -140,7 +139,7 @@ class P3MGNet(nn.Module):
     # -----------------------------
     # iter_P3MG (utilise PD_model)
     # -----------------------------
-    def iter_P3MG(self, static, dynamic, x, y, lmbd, tau):
+    def iter_P3MG(self, static, dynamic, x, y, lmbd):
         """
         Itérations P3MG génériques (k>1).
         NOTE: on appelle le *modèle* PD (PDInit_layer + PD_model) et non la classe PrimalDualNet.
@@ -203,8 +202,7 @@ class P3MGNet(nn.Module):
         Bx = tc.bmm(Dx, Ad.transpose(1, 2))  # (P, L, L)
 
         # --------- Appel du MODÈLE PD ---------
-        tau_dummy = tc.zeros((), dtype=dtype, device=device)
-        sub_static_input = [xb, Dx, Bx, gradxb, sub, sup, P, N, tau_dummy]
+        sub_static_input = [xb, Dx, Bx, gradxb, sub, sup, P, N]
 
         # 1) init via PDInit_layer
         u0, sub_static = self.pd_net.init_PD(sub_static_input)     # [un, vn]

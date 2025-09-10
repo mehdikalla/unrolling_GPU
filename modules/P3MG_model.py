@@ -21,7 +21,7 @@ class layer_0(nn.Module):
     def forward(self, static, dynamic, x, y):
         lmbd = R(self.lmbd)
         # tau n'est pas utilisé ici, contrairement à layer_k
-        x_new, dynamic_new = self.p3mg.iter_P3MG_base(static, x, y, lmbd, tau=None)
+        x_new, dynamic_new = self.p3mg.iter_P3MG_base(static, x, y, lmbd)
         return x_new, dynamic_new
 
 
@@ -38,8 +38,7 @@ class layer_k(nn.Module):
 
     def forward(self, static, dynamic, x, y):
         lmbd = R(self.lmbd)
-        tau = R(self.PD_tau)
-        x_new, dynamic_new = self.p3mg.iter_P3MG(static, dynamic, x, y, lmbd, tau)
+        x_new, dynamic_new = self.p3mg.iter_P3MG(static, dynamic, x, y, lmbd)
         return x_new, dynamic_new
 
 

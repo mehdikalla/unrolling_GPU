@@ -12,7 +12,7 @@ class PrimalDualNet(nn.Module):
         """
         Initialisation des variables et calculs préliminaires pour le primal-dual.
         """
-        xb, D, B, grad, sub, sup, P, N, tau = sub_static_input
+        xb, D, B, grad, sub, sup, P, N = sub_static_input
 
         device = xb.device
         dtype  = xb.dtype
@@ -29,23 +29,30 @@ class PrimalDualNet(nn.Module):
         vn = tc.zeros((P, N), dtype=dtype, device=device)
 
         norm_D = tc.norm(D.reshape(P, -1), p=2, dim=1).clamp_min(1e-12)  # (P,)
-        delta = 1.0 / norm_D
-        gamma = 1.0 / norm_D
+        delta0 = 1.0 / norm_D
+        gamma0 = 1.0 / norm_D
+
+        u_new = [un, vn]
+        sub_static = [xb, grad, P, D, B, L, delta0, gamma0]
+
+        return u_new, sub_static
+
+    def iter_PD(self, sub_static, u_new, tau, w_d):
+        """
+        Itération générique du modèle Primal-Dual
+        """
+        xb, grad, P, D, B, L, delta0, gamma0 = sub_static
+        
+        delta = w_d*delta0
+        gamma = delta0/w_d
+
+        device = xb.device
+        dtype  = xb.dtype
 
         eye = tc.eye(L, dtype=dtype, device=device).unsqueeze(0).expand(P, L, L)
         eyemu = eye + delta.view(P, 1, 1) * B
         inv_eyemu = tc.linalg.inv(eyemu)
 
-        u_new = [un, vn]
-        sub_static = [xb, grad, P, D, inv_eyemu, gamma, delta]
-
-        return u_new, sub_static
-
-    def iter_PD(self, sub_static, u_new, tau):
-        """
-        Itération générique du modèle Primal-Dual
-        """
-        xb, grad, P, D, inv_eyemu, gamma, delta = sub_static
         un, vn = u_new
 
         # u = un - μ * (vn @ D^T)
