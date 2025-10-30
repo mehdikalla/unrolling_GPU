@@ -159,7 +159,7 @@ class U_P3MG(nn.Module):
         # Loaders + dimensions N/M
         self.create_loaders(need_names)
         # Optimizer
-        #self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
+        self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
 
         # Optional checkpoint load
         start_epoch = 0
@@ -193,17 +193,18 @@ class U_P3MG(nn.Module):
                 # Forward statique
                 static = self.p3mg_tmp.init_P3MG(list(self.static_params), X0, Y)
 
-                # Forward réseau
+                # Forward dynamique
                 X_pred, _ = self.model(static, None, X0, Y)
 
-                # Sanity
+                # Sanity check
                 if X_pred.shape != X_true.shape:
                     raise ValueError(f"Shape mismatch: {X_pred.shape} vs {X_true.shape}")
 
+                # Loss et backward
                 loss = self.criterion(X_pred, X_true)
                 batch_losses.append(loss.item())
 
-                self.optimizer.zero_grad(set_to_none=True)
+                self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
 
@@ -243,7 +244,7 @@ class U_P3MG(nn.Module):
             }, os.path.join(self.path_save, f'checkpoint_epoch{epoch}.pt'))
             # Quelques signaux
             self.plot_signals(X_true, X_pred, epoch)
-            
+
         # Courbes
         self.plot_losses(train_losses, val_losses)
         return train_losses, val_losses

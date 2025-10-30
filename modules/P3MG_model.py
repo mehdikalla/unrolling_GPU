@@ -53,7 +53,7 @@ class P3MG_model(nn.Module):
         """
         super().__init__()
         self.Layers = nn.ModuleList()
-        self.f_act = FCNet([1, 3, 3, 1])
+        self.f_act = FCNet([1, 3, 5, 3, 1])
         for i in range(num_layers):
             if i == 0:
                 self.Layers.append(layer_0(num_pd_layers, self.f_act))
