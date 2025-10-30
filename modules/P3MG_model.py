@@ -2,7 +2,7 @@
 import torch
 import torch.nn as nn
 from modules.P3MG_func import P3MGNet  # ta classe OO avec iter_P3MG_base et iter_P3MG
-from modules.utils import FCNet
+from modules.FCNet import FCNet
 R = FCNet([3,3,3])  # réseau pour contraindre lambda à être positif
 RelU = nn.ReLU()
 
