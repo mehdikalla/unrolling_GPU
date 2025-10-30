@@ -203,9 +203,9 @@ class U_P3MG(nn.Module):
                 loss = self.criterion(X_pred, X_true)
                 batch_losses.append(loss.item())
 
-                #self.optimizer.zero_grad(set_to_none=True)
-                #loss.backward()
-                #self.optimizer.step()
+                self.optimizer.zero_grad(set_to_none=True)
+                loss.backward()
+                self.optimizer.step()
 
                 if batch_idx % 10 == 0:
                     print(f"  Batch {batch_idx}/{len(self.train_loader)} – Loss: {loss.item():.4e}")
@@ -243,7 +243,7 @@ class U_P3MG(nn.Module):
             }, os.path.join(self.path_save, f'checkpoint_epoch{epoch}.pt'))
             # Quelques signaux
             self.plot_signals(X_true, X_pred, epoch)
-
+            
         # Courbes
         self.plot_losses(train_losses, val_losses)
         return train_losses, val_losses

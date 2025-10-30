@@ -3,18 +3,6 @@ import torch
 import torch.nn as nn
 from modules.PD_func import PrimalDualNet  
 
-class BoundedSigmoid(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.sigmoid = nn.Sigmoid()
-    
-    def forward(self, x):
-        # f(x) = 0.5 + sigmoid(x) ∈ (0.5, 1.5)
-        return 0.5 + self.sigmoid(x)
-
-R=nn.Softplus()
-SB=BoundedSigmoid()
-S = nn.Sigmoid()
 # -------------------------
 # Primal-Dual model layers
 # -------------------------
