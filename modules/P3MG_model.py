@@ -20,7 +20,9 @@ class layer_0(nn.Module):
 
     def forward(self, static, dynamic, x, y):
         # tau n'est pas utilisé ici, contrairement à layer_k
-        lmbd = S(self.f_act(self.lmbd))
+        self.H = static[0]
+        bruit = torch.pow(torch.bmm(self.H, x) - y, 2)
+        lmbd = S(self.f_act(bruit))
         x_new, dynamic_new = self.p3mg.iter_P3MG_base(static, x, y, lmbd)
         return x_new, dynamic_new
 
@@ -37,7 +39,9 @@ class layer_k(nn.Module):
         self.lmbd = nn.Parameter(torch.DoubleTensor([8e-5]), requires_grad=True)
 
     def forward(self, static, dynamic, x, y):
-        lmbd = S(self.f_act(self.lmbd))
+        self.H = static[0]
+        bruit = torch.pow(torch.bmm(self.H, x) - y, 2)
+        lmbd = S(self.f_act(bruit))
         x_new, dynamic_new = self.p3mg.iter_P3MG(static, dynamic, x, y, lmbd)
         return x_new, dynamic_new
 

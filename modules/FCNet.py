@@ -13,6 +13,11 @@ class FCNet(nn.Module):
         self.layers = nn.ModuleList(layers)
 
     def forward(self, x):
-        for i, layer in enumerate(self.layers):
-            x = layer(x)
+        # Propagation à travers toutes les couches sauf la dernière avec ReLU
+        for layer in self.layers[:-1]:
+            x = F.relu(layer(x))
+
+        # Dernière couche sans activation
+        x = self.layers[-1](x)
+
         return x
