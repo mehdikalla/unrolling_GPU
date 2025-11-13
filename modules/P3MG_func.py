@@ -12,7 +12,8 @@ class P3MGNet(nn.Module):
         """
         super().__init__()
         self.pd_net = PrimalDualNet()
-        self.pd_model = PD_model(num_pd_layers)
+        self.num_pd_layers = num_pd_layers
+        
     # -------------------------
     # init_P3MG (inchangée)
     # -------------------------
@@ -145,6 +146,8 @@ class P3MGNet(nn.Module):
         NOTE: on appelle le *modèle* PD (PDInit_layer + PD_model) et non la classe PrimalDualNet.
         """
         P, N, M = x.size(0), x.size(1), y.size(1)
+
+        self.pd_model = PD_model(self.num_pd_layers)
         
         Hmat, alpha, beta, eta, sub, sup, gamma, Cg2, Vprec, Sprec_2, Hnorm2 = static
         LipsMaj = lmbd * (1 / (alpha * beta) + Cg2) + Hnorm2
