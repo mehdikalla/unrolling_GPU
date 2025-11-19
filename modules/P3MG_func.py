@@ -58,12 +58,13 @@ class P3MGNet(nn.Module):
         Première itération P3MG.
         NOTE: on appelle le *modèle* PD (PDInit_layer + PD_model) et non la classe PrimalDualNet.
         """
+        self.pd_model = PD_model(self.num_pd_layers)
         P, N, M = x.size(0), x.size(1), y.size(1)
         Hmat, alpha, beta, eta, sub, sup, gamma, Cg2, Vprec, Sprec_2, Hnorm2 = static
 
         LipsMaj = lmbd * (1 / (alpha * beta) + Cg2) + Hnorm2
 
-        device = x.device
+        device = "cuda" if tc.cuda.is_available() else "cpu"
         dtype  = x.dtype
 
         # Statics -> device
@@ -83,6 +84,7 @@ class P3MGNet(nn.Module):
 
         # Sous-espace (itération 1)
         Dx_list = []
+        Ad_list = []
         subspace_iter1 = [1, 0]
         if subspace_iter1[0]:
             Dx_list.append(Pgradx)
@@ -108,27 +110,29 @@ class P3MGNet(nn.Module):
             PgradxP    = proj_temp - x
             Dx_list.append(PgradxP)
 
-        if len(Dx_list) == 0:
-            Dx_list.append(Pgradx)
-
+        for d in Dx_list:
+            Ad_temp = Majorante_x(d, xb, alpha, l1b, beta, Cg2, Hmat, lmbd)
+            Ad_list.append(Ad_temp)
+        
         Dx = tc.stack(Dx_list, dim=1)  # (P, L, N)
+        
+        if  len(Ad_list) > 0:
+            Ad = tc.stack(Ad_list, dim=1)  # (P, L, N)
+        else :
+            Ad = tc.zeros((P, 0, N), dtype=dtype, device=device)
 
-        # Bx "placeholder" (comme dans ta version d’origine)
-        Ad = tc.zeros((P, Dx.size(1), N), dtype=dtype, device=device)
+        # Bx matrix
         Bx = tc.bmm(Dx, Ad.transpose(1, 2))  # (P, L, L)
 
         # --------- Appel du MODÈLE PD ---------
-        # Construire l'input attendu par init_PD: [xb, D, B, grad, sub, sup, P, N, tau]
-        # NB: tau passé ici n'est pas utilisé par init_PD ; le PD_model apprendra ses propres τ via Softplus
-        
         sub_static_input = [xb, Dx, Bx, gradxb, sub, sup, P, N]
 
         # 1) init via PDInit_layer
-        u0, sub_static = self.pd_net.init_PD(sub_static_input)     # u0 = [un, vn]
+        w0, sub_static = self.pd_net.init_PD(sub_static_input)     # w0 = [un, vn]
 
         # 2) unrolling PD via PD_model (utilise ses τ internes)
-        u_final = self.pd_model(sub_static, u0)             # [un, vn] après K couches
-        un, vn = u_final
+        w_final = self.pd_model(sub_static, w0)             # [un, vn] après K couches
+        un, vn = w_final
 
         # 3) reconstruire dx et x
         dx_new = tc.bmm(un.unsqueeze(1), Dx).squeeze(1)     # (P, N)
@@ -153,7 +157,7 @@ class P3MGNet(nn.Module):
         LipsMaj = lmbd * (1 / (alpha * beta) + Cg2) + Hnorm2
         dx_old, Pgradx_old = dynamic
 
-        device = x.device
+        device = "cuda" if tc.cuda.is_available() else "cpu"
         dtype  = x.dtype
 
         # Statics -> device
@@ -170,6 +174,7 @@ class P3MGNet(nn.Module):
 
         # Sous-espace (général)
         Dx_list = []
+        Ad_list = []
         subspace_gen = [1, 1, 1, 1]
         if subspace_gen[0]:
             Dx_list.append(Pgradx)
@@ -198,21 +203,29 @@ class P3MGNet(nn.Module):
         if len(Dx_list) == 0:
             Dx_list.append(Pgradx)
 
+        for d in Dx_list:
+            Ad_temp = Majorante_x(d, xb, alpha, l1b, beta, Cg2, Hmat, lmbd)
+            Ad_list.append(Ad_temp)
+        
         Dx = tc.stack(Dx_list, dim=1)  # (P, L, N)
+        
+        if  len(Ad_list) > 0:
+            Ad = tc.stack(Ad_list, dim=1)  # (P, L, N)
+        else :
+            Ad = tc.zeros((P, 0, N), dtype=dtype, device=device)
 
-        # Bx "placeholder" (comme dans la version d’origine)
-        Ad = tc.zeros((P, Dx.size(1), N), dtype=dtype, device=device)
+        # Bx "placeholder" 
         Bx = tc.bmm(Dx, Ad.transpose(1, 2))  # (P, L, L)
-
+    
         # --------- Appel du MODÈLE PD ---------
         sub_static_input = [xb, Dx, Bx, gradxb, sub, sup, P, N]
 
         # 1) init via PDInit_layer
-        u0, sub_static = self.pd_net.init_PD(sub_static_input)     # [un, vn]
+        w0, sub_static = self.pd_net.init_PD(sub_static_input)     # [un, vn]
 
         # 2) unrolling PD via PD_model
-        u_final = self.pd_model(sub_static, u0)             # [un, vn]
-        un, vn = u_final
+        w_final = self.pd_model(sub_static, w0)             # [un, vn]
+        un, vn = w_final
 
         # 3) reconstruire dx et x
         dx_new = tc.bmm(un.unsqueeze(1), Dx).squeeze(1)     # (P, N)

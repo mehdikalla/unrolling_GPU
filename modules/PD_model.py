@@ -15,9 +15,9 @@ class PD_layer(nn.Module):
         super().__init__()
         self.pd = PrimalDualNet()
 
-    def forward(self, sub_static, u_new):
-        u_new = self.pd.iter_PD(sub_static, u_new)
-        return u_new
+    def forward(self, sub_static, w_new):
+        w_new = self.pd.iter_PD(sub_static, w_new)
+        return w_new
 
 
 class PD_model(nn.Module):
@@ -25,9 +25,9 @@ class PD_model(nn.Module):
         super().__init__()
         self.Layers = nn.ModuleList([PD_layer() for _ in range(num_layers)])
 
-    def forward(self, sub_static, u0):
-        u = u0
+    def forward(self, sub_static, w0):
+        w = w0
         for l in self.Layers:
-            u = l(sub_static, u)
-        return u
+            w = l(sub_static, w)
+        return w
 # -------------------

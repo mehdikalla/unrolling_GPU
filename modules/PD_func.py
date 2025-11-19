@@ -32,19 +32,19 @@ class PrimalDualNet(nn.Module):
         delta0 = 1.0 / norm_D
         gamma0 = 1.0 / norm_D
 
-        u_new = [un, vn]
+        w_new = [un, vn]
         sub_static = [xb, grad, P, D, B, L, delta0, gamma0]
 
-        return u_new, sub_static
+        return w_new, sub_static
 
-    def iter_PD(self, sub_static, u_new, tau = 0.5, w_d = 1, w_g=1):
+    def iter_PD(self, sub_static, w_new, tau = 0.5, q_d = 1, q_g=1):
         """
         Itération générique du modèle Primal-Dual
         """
         xb, grad, P, D, B, L, delta0, gamma0 = sub_static
-        
-        delta = w_d*delta0
-        gamma = w_g*gamma0
+
+        delta = q_d*delta0
+        gamma = q_g*gamma0
 
         device = xb.device
         dtype  = xb.dtype
@@ -52,8 +52,7 @@ class PrimalDualNet(nn.Module):
         eye = tc.eye(L, dtype=dtype, device=device).unsqueeze(0).expand(P, L, L)
         eyemu = eye + delta.view(P, 1, 1) * B
         inv_eyemu = tc.linalg.inv(eyemu)
-
-        un, vn = u_new
+        un, vn = w_new
 
         # u = un - μ * (vn @ D^T)
         u = un - delta.view(P, 1) * tc.bmm(vn.unsqueeze(1), D.transpose(1, 2)).squeeze(1)  # (P,L)
@@ -70,6 +69,6 @@ class PrimalDualNet(nn.Module):
         un = un + tau * (pn - un)
         vn = vn + tau * (qn - vn)
 
-        u_new = [un, vn]
-        return u_new
+        w_new = [un, vn]
+        return w_new
 

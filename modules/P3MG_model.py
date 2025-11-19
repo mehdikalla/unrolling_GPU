@@ -15,13 +15,17 @@ class layer_0(nn.Module):
     def __init__(self, p3mg):
         super().__init__()
         self.p3mg = p3mg
-        self.f_act = FCNet([1, 3, 5, 3, 1])
-        self.lmbd = nn.Parameter(torch.DoubleTensor([0]), requires_grad=True)
+        self.f_act = FCNet([100, 3, 5, 3, 1])
+        self.lmbd = nn.Parameter(torch.DoubleTensor([0.01]), requires_grad=True)
 
     def forward(self, static, dynamic, x, y):
         # tau n'est pas utilisé ici, contrairement à layer_k
-        self.H = static[0]
-        bruit = torch.pow(torch.bmm(self.H, x) - y, 2)
+        # Clone H to 10 batches
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        x = x.to(device)
+        y = y.to(device)
+        self.H = static[0].repeat(x.shape[0], 1, 1).to(device)
+        bruit = torch.pow(torch.bmm(self.H, x.unsqueeze(2)).squeeze(2) - y, 2)
         lmbd = S(self.f_act(bruit))
         x_new, dynamic_new = self.p3mg.iter_P3MG_base(static, x, y, lmbd)
         return x_new, dynamic_new
@@ -35,12 +39,15 @@ class layer_k(nn.Module):
     def __init__(self, p3mg):
         super().__init__()
         self.p3mg = p3mg
-        self.f_act = FCNet([1, 3, 5, 3, 1])
+        self.f_act = FCNet([100, 3, 5, 3, 1])
         self.lmbd = nn.Parameter(torch.DoubleTensor([8e-5]), requires_grad=True)
 
     def forward(self, static, dynamic, x, y):
-        self.H = static[0]
-        bruit = torch.pow(torch.bmm(self.H, x) - y, 2)
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        x = x.to(device)
+        y = y.to(device)
+        self.H = static[0].repeat(x.shape[0], 1, 1).to(device)
+        bruit = torch.pow(torch.bmm(self.H, x.unsqueeze(2)).squeeze(2) - y, 2)
         lmbd = S(self.f_act(bruit))
         x_new, dynamic_new = self.p3mg.iter_P3MG(static, dynamic, x, y, lmbd)
         return x_new, dynamic_new
