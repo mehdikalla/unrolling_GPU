@@ -2,6 +2,7 @@
 import torch
 import torch.nn as nn
 from modules.PD_func import PrimalDualNet  
+S = nn.Softplus()
 
 # -------------------------
 # Primal-Dual model layers
@@ -14,9 +15,11 @@ class PD_layer(nn.Module):
     def __init__(self):
         super().__init__()
         self.pd = PrimalDualNet()
+        self.tau = nn.Parameter(torch.DoubleTensor([0.5]), requires_grad=True)
 
     def forward(self, sub_static, w_new):
-        w_new = self.pd.iter_PD(sub_static, w_new)
+        tau = S(self.tau)
+        w_new = self.pd.iter_PD(sub_static, w_new, tau)
         return w_new
 
 

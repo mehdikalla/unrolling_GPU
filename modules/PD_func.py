@@ -37,7 +37,7 @@ class PrimalDualNet(nn.Module):
 
         return w_new, sub_static
 
-    def iter_PD(self, sub_static, w_new, tau = 0.5, q_d = 1, q_g=1):
+    def iter_PD(self, sub_static, w_new, tau, q_d = 1, q_g=1):
         """
         Itération générique du modèle Primal-Dual
         """
