@@ -1,13 +1,8 @@
-results/baseline/checkpoints/*
-results/baseline/plots/*
-results/baseline/logs/*
+results/baseline/*
 results/unrolled/checkpoints/*
 results/unrolled/plots/*
 results/unrolled/logs/*
 
-!results/baseline/checkpoints/.gitkeep
-!results/baseline/plots/.gitkeep
-!results/baseline/logs/.gitkeep 
 !results/unrolled/checkpoints/.gitkeep
 !results/unrolled/plots/.gitkeep
 !results/unrolled/logs/.gitkeep
