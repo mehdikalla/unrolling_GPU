@@ -1,7 +1,7 @@
 # modules/P3MG_model.py
 import torch
 import torch.nn as nn
-from modules.PD_func import PrimalDualNet  
+from models.PD_func import PrimalDualNet  
 S = nn.Softplus()
 
 # -------------------------

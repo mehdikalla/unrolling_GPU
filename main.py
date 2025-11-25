@@ -4,7 +4,7 @@ import os
 import sys
 import torch
 from datetime import datetime
-from modules.P3MG_network import U_P3MG
+from src.models.network import U_P3MG
 
 
 def parse_args():
@@ -12,7 +12,7 @@ def parse_args():
         description="P3MG: entraînement ou test (GPU auto si dispo)"
     )
     # Mode
-    p.add_argument("--function", type=str, choices=["train", "test"], default="train")
+    p.add_argument("--function", type=str, choices=["train", "test", "grid_search", "plot_params"], default="train")
 
     # Données
     p.add_argument("--dataset_dir", type=str, default="./Dataset")
@@ -37,11 +37,18 @@ def parse_args():
     p.add_argument("--train_batch_size", type=int,   default=10)
     p.add_argument("--val_batch_size",   type=int,   default=1)
     p.add_argument("--test_batch_size",  type=int,   default=1)
+    
+    p.add_argument("--gs_lambdas", nargs='+', type=float, default=[1e-4, 5e-5, 1e-5, 5e-6, 1e-6],
+                   help="Liste des valeurs de lambda (régularisation) à tester pour la grid search.")
+    p.add_argument("--gs_ckpt",    type=str, default=None,
+                   help="Chemin d'un checkpoint .pt à utiliser comme base pour la grid search.")
+
 
     # I/O & device
     p.add_argument("--save_dir", type=str, default="./Results")
     p.add_argument("--device",   type=str, default="cuda")  # "cuda" ou "cpu"
-    p.add_argument("--resume",   type=str, default=None)    # chemin d’un checkpoint .pt
+    p.add_argument("--resume",   type=str, default=None,    # chemin d’un checkpoint .pt
+                   help="Chemin d'un checkpoint .pt à reprendre (train/test) ou à analyser (plot_params).")
     p.add_argument("--seed",     type=int, default=42)
 
     return p.parse_args()
@@ -56,7 +63,6 @@ def choose_device(pref: str) -> torch.device:
 def main():
     args = parse_args()
 
-    # Seed (comportement reproductible raisonnable)
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
@@ -83,8 +89,6 @@ def main():
             print(f"[ERREUR] Fichier {name} introuvable: {pth}")
             sys.exit(1)
 
-    # Tu forces le float64 dans tout le pipeline (réseau et fonctions).
-    # Si tu veux passer en float32 plus tard, il faudra adapter les .double() dans le code.
     initial_x0 = None
 
     static_params = (args.alpha, args.beta, args.eta, args.sub, args.sup)
@@ -100,15 +104,26 @@ def main():
         device=str(device)
     )
 
-    # Option reprise
     ckpt = args.resume if (args.resume and os.path.isfile(args.resume)) else None
 
     if args.function == "train":
         manager.train(need_names=False, checkpoint_path=ckpt)
-    else:
-        # S’assure que les loaders test existent
+        
+    elif args.function == "test":
         manager.create_loaders(need_names=False)
         manager.test(need_names=False, checkpoint_path=ckpt)
+        
+    elif args.function == "grid_search":
+        gs_ckpt_path = args.gs_ckpt if (args.gs_ckpt and os.path.isfile(args.gs_ckpt)) else ckpt
+        manager.grid_search_lambda(args.gs_lambdas, need_names=False, checkpoint_path=gs_ckpt_path)
+    
+    elif args.function == "plot_params":
+        plot_path = args.resume
+        if not plot_path or not os.path.isfile(plot_path):
+             print(f"[ERREUR] Le mode plot_params nécessite un chemin valide vers un checkpoint via --resume. Fichier introuvable: {plot_path}")
+             sys.exit(1)
+        
+        manager.plot_learned_params_evolution(plot_path)
 
 
 if __name__ == "__main__":

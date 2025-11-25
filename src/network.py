@@ -10,7 +10,7 @@ from modules.P3MG_func import P3MGNet
 import torch.nn.functional as F
 
 
-class U_P3MG(nn.Module):
+class U_P3MG():
     def __init__(
         self,
         num_layers: int,

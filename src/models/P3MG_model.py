@@ -1,9 +1,10 @@
 # modules/P3MG_model.py
-import torch
+import torch as tc
 import torch.nn as nn
-from modules.P3MG_func import P3MGNet 
-from modules.FCNet import FCNet
+from models.P3MG_func import P3MGNet 
+from models.FC_block import FC_block
 S = nn.Softplus()
+
 # --------------------
 # P3MG model layers
 # --------------------
@@ -15,18 +16,17 @@ class layer_0(nn.Module):
     def __init__(self, p3mg):
         super().__init__()
         self.p3mg = p3mg
-        self.f_act = FCNet([100, 3, 5, 3, 1])
-        self.lmbd = nn.Parameter(torch.DoubleTensor([0.01]), requires_grad=True)
+        self.f_act = FC_block([100, 50, 25, 12, 1])
 
-    def forward(self, static, dynamic, x, y):
-        # tau n'est pas utilisé ici, contrairement à layer_k
-        # Clone H to 10 batches
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        x = x.to(device)
+    def forward(self, static, dynamic, x, y, lmbd_override=None):
+        device = 'cuda' if tc.cuda.is_available() else 'cpu'
         y = y.to(device)
-        self.H = static[0].repeat(x.shape[0], 1, 1).to(device)
-        bruit = torch.pow(torch.bmm(self.H, x.unsqueeze(2)).squeeze(2) - y, 2)
-        lmbd = S(self.f_act(bruit))
+        
+        if lmbd_override is not None:
+            lmbd = lmbd_override.to(x.device).double()
+        else:
+            lmbd = S(self.f_act(tc.pow(y,2)))
+            
         x_new, dynamic_new = self.p3mg.iter_P3MG_base(static, x, y, lmbd)
         return x_new, dynamic_new
 
@@ -39,16 +39,17 @@ class layer_k(nn.Module):
     def __init__(self, p3mg):
         super().__init__()
         self.p3mg = p3mg
-        self.f_act = FCNet([100, 3, 5, 3, 1])
-        self.lmbd = nn.Parameter(torch.DoubleTensor([8e-5]), requires_grad=True)
+        self.f_act = FC_block([100, 50, 25, 12, 1])
 
-    def forward(self, static, dynamic, x, y):
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        x = x.to(device)
+    def forward(self, static, dynamic, x, y, lmbd_override=None):
+        device = 'cuda' if tc.cuda.is_available() else 'cpu'
         y = y.to(device)
-        self.H = static[0].repeat(x.shape[0], 1, 1).to(device)
-        bruit = torch.pow(torch.bmm(self.H, x.unsqueeze(2)).squeeze(2) - y, 2)
-        lmbd = S(self.f_act(bruit))
+        
+        if lmbd_override is not None:
+            lmbd = lmbd_override.to(x.device).double()
+        else:
+            lmbd = S(self.f_act(tc.pow(y,2)))
+            
         x_new, dynamic_new = self.p3mg.iter_P3MG(static, dynamic, x, y, lmbd)
         return x_new, dynamic_new
 
@@ -71,10 +72,9 @@ class P3MG_model(nn.Module):
             else:
                 self.Layers.append(layer_k(self.p3mg))
 
-    def forward(self, static, dynamic, x0, y, x_true=None):
+    def forward(self, static, dynamic, x0, y, x_true=None, lmbd_override=None):
         x, dyn = x0, dynamic
         for l in self.Layers:
-            x, dyn = l(static, dyn, x, y)
+            x, dyn = l(static, dyn, x, y, lmbd_override=lmbd_override) 
         return x, dyn
 # --------------------
-

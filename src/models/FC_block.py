@@ -1,7 +1,7 @@
 import torch.nn as nn
 import torch.nn.functional as F
 
-class FCNet(nn.Module):
+class FC_block(nn.Module):
     def __init__(self, layer_sizes):
         """
         layer_sizes : liste d'entiers [in_dim, hidden1, hidden2, ..., out_dim]
