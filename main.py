@@ -4,7 +4,7 @@ import os
 import sys
 import torch
 from datetime import datetime
-from src.models.network import U_P3MG
+from src.network import U_P3MG
 
 
 def parse_args():
