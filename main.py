@@ -21,8 +21,8 @@ def parse_args():
     p.add_argument("--test",  type=str, default="test.pt")
 
     # Modèle
-    p.add_argument("--number_layers", type=int, default=5)
-    p.add_argument("--number_pd_layers", type=int, default=5)
+    p.add_argument("--number_layers", type=int, default=15)
+    p.add_argument("--number_pd_layers", type=int, default=8)
 
     # Paramètres statiques P3MG
     p.add_argument("--alpha", type=float, default=1e-5)
@@ -30,7 +30,7 @@ def parse_args():
     p.add_argument("--eta",   type=float, default=1e-2)
 
     # Entraînement
-    p.add_argument("--epochs",           type=int,   default=10)
+    p.add_argument("--epochs",           type=int,   default=25)
     p.add_argument("--lr",               type=float, default=0.01)
     p.add_argument("--train_batch_size", type=int,   default=10)
     p.add_argument("--val_batch_size",   type=int,   default=1)
