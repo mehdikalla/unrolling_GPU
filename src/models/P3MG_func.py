@@ -1,39 +1,26 @@
-# modules/P3MG_func.py
 import torch as tc
 import torch.nn as nn
 from src.utils import*
-from models.PD_func import PrimalDualNet
-from models.PD_model import PD_model
+from src.models.PD_func import PrimalDualNet
+from src.models.PD_model import PD_model # NOTE: Doit être utilisé comme un callable
 
 class P3MGNet(nn.Module):
     def __init__(self, num_pd_layers: int = 3):
-        """
-        num_pd_layers : nombre d'itérations (couches) du modèle primal-dual utilisé à l'intérieur de P3MG.
-        """
         super().__init__()
         self.pd_net = PrimalDualNet()
         self.num_pd_layers = num_pd_layers
         
     # -------------------------
-    # init_P3MG (inchangée)
+    # init_P3MG 
     # -------------------------
     def init_P3MG(self, static_input, x0, y):
-        """
-        Étape 0 : Initialisation, chargement des données, définition des variables
-        et calculs préliminaires.
-        """
+        # ... (Logique inchangée pour initialiser les paramètres statiques Hmat, Vprec, etc.) ...
         P, N, M = x0.size(0), x0.size(1), y.size(1)
-        alpha, beta, eta, sub, sup = static_input
+        alpha, beta, eta = static_input
 
         # génération de Hmat sur CPU
         T, Hmat = dosy_mat(
-            int(N),   # nombre de D-values
-            int(M),   # nombre de points temporels
-            0,        # tmin
-            1.5,      # tmax
-            1,        # Dmin
-            1000,     # Dmax
-            dtype=x0.dtype
+            int(N), int(M), 0, 1.5, 1, 1000, dtype=x0.dtype
         )
 
         # Constantes
@@ -44,23 +31,24 @@ class P3MGNet(nn.Module):
         # SVD préconditionnement
         rankprec = 10
         Uprec, Sprec, VprecT = tc.linalg.svd(Hmat, full_matrices=False)
-        Vprec    = VprecT.t()[:, :rankprec]          # (N, r)
-        Sprec    = Sprec[:rankprec]                   # (r,)
-        Sprec_2  = 1.0 / (Sprec ** 2)                 # (r,)
+        Vprec    = VprecT.t()[:, :rankprec]
+        Sprec    = Sprec[:rankprec]
+        Sprec_2  = 1.0 / (Sprec ** 2)
 
-        return Hmat, alpha, beta, eta, sub, sup, gamma, Cg2, Vprec, Sprec_2, Hnorm2
+        return Hmat, alpha, beta, eta, gamma, Cg2, Vprec, Sprec_2, Hnorm2
 
     # --------------------------------
-    # iter_P3MG_base (utilise PD_model)
+    # iter_P3MG_base (Correction pour Tau)
     # --------------------------------
-    def iter_P3MG_base(self, static, x, y, lmbd):
+    def iter_P3MG_base(self, static, x, y, lmbd, tau_params): # <-- AJOUT DE tau_params
         """
         Première itération P3MG.
-        NOTE: on appelle le *modèle* PD (PDInit_layer + PD_model) et non la classe PrimalDualNet.
         """
-        self.pd_model = PD_model(self.num_pd_layers)
+        # NOTE: PD_model est instancié ici, mais les paramètres tau sont passés de l'extérieur.
+        pd_model_instance = PD_model(self.num_pd_layers) 
+        
         P, N, M = x.size(0), x.size(1), y.size(1)
-        Hmat, alpha, beta, eta, sub, sup, gamma, Cg2, Vprec, Sprec_2, Hnorm2 = static
+        Hmat, alpha, beta, eta, gamma, Cg2, Vprec, Sprec_2, Hnorm2 = static
 
         LipsMaj = lmbd * (1 / (alpha * beta) + Cg2) + Hnorm2
 
@@ -89,22 +77,18 @@ class P3MGNet(nn.Module):
         if subspace_iter1[0]:
             Dx_list.append(Pgradx)
         if subspace_iter1[1]:
-            # Majorant diagonal (batch)
-            Adiag0     = majorante_x_diag(x, alpha, l1, beta, Cg2, lmbd, 0)   # (P, N)
-            Delta_inv  = 1.0 / Adiag0                                       # (P, N)
-            Vprec_T    = Vprec.t().unsqueeze(0).expand(P, -1, -1)           # (P, r, N)
-            weighted_V = Vprec_T * Delta_inv.unsqueeze(1)                   # (P, r, N)
-            temp_batch = tc.bmm(weighted_V, Vprec.unsqueeze(0).expand(P, -1, -1))  # (P, r, r)
-            diag_S     = tc.diag_embed(Sprec_2).unsqueeze(0).expand(P, -1, -1)     # (P, r, r)
-            temp       = diag_S + temp_batch                                 # (P, r, r)
-
-            # Préconditionnement du gradient
-            Prec_gradx = Delta_inv * gradx                                   # (P, N)
-            temp_vec   = tc.matmul(Prec_gradx, Vprec)                         # (P, r)
-            sol        = tc.linalg.solve(temp, temp_vec.unsqueeze(-1)).squeeze(-1) # (P, r)
-            correction = tc.bmm(Vprec.unsqueeze(0).expand(P, -1, -1), sol.unsqueeze(-1)).squeeze(-1)  # (P,N)
+            Adiag0     = majorante_x_diag(x, alpha, l1, beta, Cg2, lmbd, 0)
+            Delta_inv  = 1.0 / Adiag0
+            Vprec_T    = Vprec.t().unsqueeze(0).expand(P, -1, -1)
+            weighted_V = Vprec_T * Delta_inv.unsqueeze(1)
+            temp_batch = tc.bmm(weighted_V, Vprec.unsqueeze(0).expand(P, -1, -1))
+            diag_S     = tc.diag_embed(Sprec_2).unsqueeze(0).expand(P, -1, -1)
+            temp       = diag_S + temp_batch
+            Prec_gradx = Delta_inv * gradx
+            temp_vec   = tc.matmul(Prec_gradx, Vprec)
+            sol        = tc.linalg.solve(temp, temp_vec.unsqueeze(-1)).squeeze(-1)
+            correction = tc.bmm(Vprec.unsqueeze(0).expand(P, -1, -1), sol.unsqueeze(-1)).squeeze(-1)
             Prec_gradx = Prec_gradx - Delta_inv * correction
-
             temp_x     = x - Prec_gradx
             proj_temp  = proj_simplex(temp_x)
             PgradxP    = proj_temp - x
@@ -121,39 +105,38 @@ class P3MGNet(nn.Module):
         else :
             Ad = tc.zeros((P, 0, N), dtype=dtype, device=device)
 
-        # Bx matrix
         Bx = tc.bmm(Dx, Ad.transpose(1, 2))  # (P, L, L)
 
         # --------- Appel du MODÈLE PD ---------
-        sub_static_input = [xb, Dx, Bx, gradxb, sub, sup, P, N]
+        sub_static_input = [xb, Dx, Bx, gradxb, P, N]
 
         # 1) init via PDInit_layer
-        w0, sub_static = self.pd_net.init_PD(sub_static_input)     # w0 = [un, vn]
+        w0, sub_static = self.pd_net.init_PD(sub_static_input)
 
-        # 2) unrolling PD via PD_model (utilise ses τ internes)
-        w_final = self.pd_model(sub_static, w0)             # [un, vn] après K couches
+        # 2) unrolling PD via PD_model (PASSAGE DES PARAMÈTRES TAU)
+        # NOTE: PD_model doit accepter tau_params et les utiliser.
+        w_final = pd_model_instance(sub_static, w0, tau_params) 
         un, vn = w_final
 
         # 3) reconstruire dx et x
-        dx_new = tc.bmm(un.unsqueeze(1), Dx).squeeze(1)     # (P, N)
+        dx_new = tc.bmm(un.unsqueeze(1), Dx).squeeze(1)
         x_new  = xb + dx_new
 
         dynamic = [dx_new, Pgradx]
         return x_new, dynamic
 
     # -----------------------------
-    # iter_P3MG (utilise PD_model)
+    # iter_P3MG 
     # -----------------------------
-    def iter_P3MG(self, static, dynamic, x, y, lmbd):
+    def iter_P3MG(self, static, dynamic, x, y, lmbd, tau_params): # <-- AJOUT DE tau_params
         """
         Itérations P3MG génériques (k>1).
-        NOTE: on appelle le *modèle* PD (PDInit_layer + PD_model) et non la classe PrimalDualNet.
         """
+        pd_model_instance = PD_model(self.num_pd_layers) 
+        
         P, N, M = x.size(0), x.size(1), y.size(1)
 
-        self.pd_model = PD_model(self.num_pd_layers)
-        
-        Hmat, alpha, beta, eta, sub, sup, gamma, Cg2, Vprec, Sprec_2, Hnorm2 = static
+        Hmat, alpha, beta, eta, gamma, Cg2, Vprec, Sprec_2, Hnorm2 = static
         LipsMaj = lmbd * (1 / (alpha * beta) + Cg2) + Hnorm2
         dx_old, Pgradx_old = dynamic
 
@@ -207,28 +190,27 @@ class P3MGNet(nn.Module):
             Ad_temp = Majorante_x(d, xb, alpha, l1b, beta, Cg2, Hmat, lmbd)
             Ad_list.append(Ad_temp)
         
-        Dx = tc.stack(Dx_list, dim=1)  # (P, L, N)
+        Dx = tc.stack(Dx_list, dim=1)
         
         if  len(Ad_list) > 0:
-            Ad = tc.stack(Ad_list, dim=1)  # (P, L, N)
+            Ad = tc.stack(Ad_list, dim=1)
         else :
             Ad = tc.zeros((P, 0, N), dtype=dtype, device=device)
 
-        # Bx "placeholder" 
-        Bx = tc.bmm(Dx, Ad.transpose(1, 2))  # (P, L, L)
+        Bx = tc.bmm(Dx, Ad.transpose(1, 2))
     
         # --------- Appel du MODÈLE PD ---------
-        sub_static_input = [xb, Dx, Bx, gradxb, sub, sup, P, N]
+        sub_static_input = [xb, Dx, Bx, gradxb, P, N]
 
         # 1) init via PDInit_layer
-        w0, sub_static = self.pd_net.init_PD(sub_static_input)     # [un, vn]
+        w0, sub_static = self.pd_net.init_PD(sub_static_input)
 
-        # 2) unrolling PD via PD_model
-        w_final = self.pd_model(sub_static, w0)             # [un, vn]
+        # 2) unrolling PD via PD_model (PASSAGE DES PARAMÈTRES TAU)
+        w_final = pd_model_instance(sub_static, w0, tau_params) # <-- CORRECTION ICI
         un, vn = w_final
 
         # 3) reconstruire dx et x
-        dx_new = tc.bmm(un.unsqueeze(1), Dx).squeeze(1)     # (P, N)
+        dx_new = tc.bmm(un.unsqueeze(1), Dx).squeeze(1)
         x_new  = xb + dx_new
 
         dynamic_new = [dx_new, Pgradx]

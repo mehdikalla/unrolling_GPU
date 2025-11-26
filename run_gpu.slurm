@@ -1,24 +1,43 @@
 #!/bin/bash
-#SBATCH --job-name=main_gpu
+#
+# ===============================================
+# Configuration SLURM pour l'Entraînement (UNROLLED)
+# ===============================================
+#SBATCH --job-name=Train_Unrolled
 #SBATCH --partition=gpu-best
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=8G
-#SBATCH --time=10:00:00
-#SBATCH --output=/scratch/mkalla/unrolling_GPU/logs/%j.out
-#SBATCH --error=/scratch/mkalla/unrolling_GPU/logs/%j.err
+#SBATCH --time=10:00:00              # Temps long pour l'entraînement (ajuster)
+#SBATCH --output=/scratch/mkalla/unrolling_GPU/logs/unrolled_%j.out
+#SBATCH --error=/scratch/mkalla/unrolling_GPU/logs/unrolled_%j.err
+
+# -------------------------------------------------------------
+# Configuration ENVIRONNEMENT
+# -------------------------------------------------------------
 set -euo pipefail
 module purge
 module load cuda/12.5
 export MPLBACKEND=Agg   
 
-# matplotlib sans écran
 cd /scratch/mkalla/unrolling_GPU
 source gpu_env/bin/activate
 
-# logs rapides pour vérifier l'env:
-python -V
-which python
-python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"
+echo "--- Démarrage de l'entraînement Unrolled ---"
 
-python main.py
+# -------------------------------------------------------------
+# EXÉCUTION DU CODE PYTHON
+# -------------------------------------------------------------
+
+# Lancement de main.py en mode train.
+# Les résultats iront dans ./Results/unrolled/run-XXXXX/
+python main.py \
+    --function train \
+    --device cuda \
+    --number_layers 10 \
+    --number_pd_layers 10 \
+    --epochs 25 \
+    --lr 5e-3 \
+    --train_batch_size 10 
+
+echo "--- Entraînement Unrolled terminé ---"

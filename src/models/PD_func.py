@@ -12,7 +12,7 @@ class PrimalDualNet(nn.Module):
         """
         Initialisation des variables et calculs préliminaires pour le primal-dual.
         """
-        xb, D, B, grad, sub, sup, P, N = sub_static_input
+        xb, D, B, grad, P, N = sub_static_input
 
         device = xb.device
         dtype  = xb.dtype
