@@ -15,7 +15,7 @@ class layer_0(nn.Module):
         super().__init__()
         self.p3mg_func = P3MGNet(num_pd_layers)
         self.f_act = FC_block([100, 50, 25, 12, 1]) 
-        self.tau_k = nn.Parameter(tc.rand(num_pd_layers).double() * 1e-4, requires_grad=True) 
+        self.tau_k = nn.Parameter(tc.empty(num_pd_layers).double().fill_(0.5), requires_grad=True) 
 
     def forward(self, static, dynamic, x, y, lmbd_override=None):
         device = 'cuda' if tc.cuda.is_available() else 'cpu'
@@ -42,7 +42,7 @@ class layer_k(nn.Module):
         super().__init__()
         self.p3mg_func = P3MGNet(num_pd_layers)
         self.f_act =  FC_block([100, 50, 25, 12, 1])
-        self.tau_k = nn.Parameter(tc.rand(num_pd_layers).double() * 1e-4, requires_grad=True)
+        self.tau_k = nn.Parameter(tc.empty(num_pd_layers).double().fill_(0.5), requires_grad=True)
 
     def forward(self, static, dynamic, x, y, lmbd_override=None):
         device = 'cuda' if tc.cuda.is_available() else 'cpu'

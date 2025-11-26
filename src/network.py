@@ -1,4 +1,4 @@
-# src/network.py (Copier-coller intégral avec mises à jour pour Grid Search Plot)
+# src/network.py (Copier-coller intégral avec Optimisation du Taux d'Apprentissage pour Tau)
 import os
 import torch
 import torch.nn as nn
@@ -9,8 +9,8 @@ import json
 from datetime import datetime
 from torch.utils.data import DataLoader
 
-# Gestion des imports selon votre structure
-from Dataset.module import MyDataset 
+from Dataset.module import MyDataset  
+
 from src.models.P3MG_model import P3MG_model
 from src.models.P3MG_func import P3MGNet
 import torch.nn.functional as F
@@ -72,27 +72,46 @@ class U_P3MG(nn.Module):
 
         # 5) Variables internes
         self.train_loader, self.val_loader, self.test_loader = None, None, None
-        self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
         self.criterion = nn.MSELoss(reduction="mean")
-        self.N_dim = 100 # Dimension signal (exemple)
-        self.M_dim = 100 # Dimension mesures (exemple)
+        self.N_dim = 100 
+        self.M_dim = 100
+
+        # 6) Optimiseur (MODIFICATION CLÉ : Groupes de paramètres pour le taux d'apprentissage)
+        tau_params = []
+        other_params = []
+        
+        for name, param in self.model.named_parameters():
+            # Les paramètres Tau sont nommés 'tau_k' dans les couches P3MG
+            if 'tau_k' in name:
+                tau_params.append(param)
+            else:
+                other_params.append(param)
+        
+        # Définition des groupes:
+        optimizer_params = [
+            {'params': other_params, 'lr': self.lr},
+            # Le LR pour Tau est 10 fois supérieur pour prévenir le gradient évanescent
+            {'params': tau_params, 'lr': self.lr * 10} 
+        ]
+        
+        self.optimizer = optim.Adam(optimizer_params, lr=self.lr)
+
 
     def create_loaders(self, need_names: bool = False):
         try:
             train_ds = MyDataset(self.path_train, self.initial_x0.numpy() if self.initial_x0 is not None else None, return_name=need_names)
-            val_ds = MyDataset(self.path_val, self.initial_x0.numpy() if self.initial_x0 is not None else None, return_name=need_names)
+            val_ds =  MyDataset(self.path_val, self.initial_x0.numpy() if self.initial_x0 is not None else None, return_name=need_names)
             test_ds = MyDataset(self.path_test, self.initial_x0.numpy() if self.initial_x0 is not None else None, return_name=need_names)
             
             self.train_loader = DataLoader(train_ds, batch_size=self.train_bs, shuffle=True, num_workers=4, pin_memory=True)
             self.val_loader = DataLoader(val_ds, batch_size=self.val_bs, shuffle=False, num_workers=4, pin_memory=True)
             self.test_loader = DataLoader(test_ds, batch_size=self.test_bs, shuffle=False, num_workers=4, pin_memory=True)
             
-            self.N_dim = train_ds.X_true.shape[1] # Assumant que X_true existe et est de la bonne forme
-            self.M_dim = train_ds.Y.shape[1] # Assumant que Y existe et est de la bonne forme
+            self.N_dim = train_ds.X_true.shape[1] 
+            self.M_dim = train_ds.Y.shape[1] 
             
         except Exception as e:
              print(f"[ERREUR] Création des loaders: {e}")
-             # Valeurs par défaut en cas d'échec de chargement
              self.N_dim, self.M_dim = 100, 100
 
     def save_config(self, args_dict: dict, filename: str = 'run_config.json'):
@@ -110,6 +129,7 @@ class U_P3MG(nn.Module):
             ckpt = torch.load(checkpoint_path, map_location=self.device)
             self.model.load_state_dict(ckpt['model_state_dict'])
             if 'optimizer_state_dict' in ckpt:
+                 # Le chargement est compatible avec les groupes de paramètres de l'optimiseur
                  self.optimizer.load_state_dict(ckpt['optimizer_state_dict'])
             return ckpt.get('epoch', 0)
         return 0
@@ -152,7 +172,6 @@ class U_P3MG(nn.Module):
                     X0 = sumY.repeat(1, self.N_dim) / (self.M_dim * self.N_dim)
                 
                 self.optimizer.zero_grad()
-                # Le modèle retourne : X_pred, dynamic, dynamic_lambdas
                 X_pred, _, _ = self.model(static, None, X0, Y) 
                 loss = self.criterion(X_pred, X_true)
                 loss.backward()
@@ -210,7 +229,7 @@ class U_P3MG(nn.Module):
         # --- NOUVEAU : PLOT DES PARAMÈTRES APPRIS À LA FIN DE L'ENTRAÎNEMENT ---
         final_plot_path = os.path.join(self.path_checkpoints, 'best_model.pt')
         if not os.path.exists(final_plot_path):
-             final_plot_path = current_ckpt_path # Utiliser le dernier si 'best' non trouvé
+             final_plot_path = current_ckpt_path 
              
         if final_plot_path:
             self.plot_learned_params_evolution(final_plot_path)
@@ -220,7 +239,6 @@ class U_P3MG(nn.Module):
         return train_losses, val_losses
 
     def test(self, need_names: bool = False, checkpoint_path: str = None):
-        # ... (Logique de test) ...
         self.load_checkpoint(checkpoint_path)
         self.create_loaders(need_names)
         
@@ -267,8 +285,7 @@ class U_P3MG(nn.Module):
             plt.savefig(os.path.join(self.path_plots, f'signal_ep{epoch}_s{i}.png')); plt.close()
 
     def plot_signals_grid_search(self, true, pred, lmbd_val, path_save):
-        """ Plot la reconstruction du signal pour le premier échantillon du Grid Search. """
-        for i in range(min(1, true.size(0))): # Plot uniquement le premier échantillon
+        for i in range(min(1, true.size(0))): 
             plt.figure(figsize=(10,4))
             plt.plot(true[i].cpu().numpy(), '-', label='True')
             plt.plot(pred[i].detach().cpu().numpy(), '--', label='Pred')
@@ -276,7 +293,6 @@ class U_P3MG(nn.Module):
             plt.savefig(os.path.join(path_save, f'signal_recons_lambda_{lmbd_val:.2e}.png')); plt.close()
 
     def plot_grid_search(self, results):
-        """ Plot la Loss en fonction du paramètre Lambda (sur échelle logarithmique). """
         l, v = list(results.keys()), list(results.values())
         plt.figure(figsize=(10,6))
         plt.semilogx(l, v, 'o-')
@@ -288,18 +304,12 @@ class U_P3MG(nn.Module):
 
 
     def plot_learned_params_evolution(self, path_model: str):
-        """
-        Visualise l'évolution des paramètres appris.
-        1. Lambda (Courbe): 1 valeur par couche (Total N)
-        2. Tau (Heatmap): M valeurs par couche (Total NxM)
-        """
         if not os.path.isfile(path_model): return
         print(f"[INFO] Plotting params from: {path_model}")
         
         ckpt = torch.load(path_model, map_location=self.device)
         self.model.load_state_dict(ckpt['model_state_dict'])
         
-        # Dossier de sortie
         base = os.path.dirname(os.path.dirname(path_model))
         out_dir = os.path.join(base, 'plots')
         if not os.path.isdir(out_dir): out_dir = os.path.dirname(path_model)
@@ -312,25 +322,18 @@ class U_P3MG(nn.Module):
         lmbd_vals = []
         tau_rows = []
 
-        # Utiliser un dummy input pour y (pour activer le FCNet)
-        dummy_y_input = torch.ones(1, 100).double().to(self.device)
+        dummy_y_input = torch.ones(1, self.M_dim).double().to(self.device)
         dummy_x0 = torch.zeros(1, self.N_dim).double().to(self.device)
         
-        # NOTE: Nous devons recréer l'environnement statique pour l'appel forward
         dummy_static = self.p3mg_tmp.init_P3MG(list(self.static_params), dummy_x0, dummy_y_input) 
 
-        # Utiliser le forward du modèle, mais seulement pour obtenir la liste des lambdas
         with torch.no_grad():
             _, _, dynamic_lambdas_tensors = self.model(dummy_static, None, dummy_x0, dummy_y_input)
 
-        # Extraction des paramètres tau appris (les poids)
         for k, layer in enumerate(self.model.Layers):
-            # Lambda (valeur calculée pour l'input dummy)
             if k < len(dynamic_lambdas_tensors):
-                # On prend la première valeur du batch (lambda est un tenseur de taille 1x1)
                 lmbd_vals.append(dynamic_lambdas_tensors[k].squeeze().item())
             
-            # Tau (poids appris)
             if hasattr(layer, 'tau_k'):
                 tau_rows.append(S(layer.tau_k).detach().cpu().numpy().flatten())
 
@@ -363,10 +366,6 @@ class U_P3MG(nn.Module):
         print("[INFO] Plotting des paramètres appris terminé.")
 
 
-    # ========================================================================
-    # Grid Search logic (ajusté pour plotting des résultats)
-    # ========================================================================
-
     def run_test_for_lambda(self, val, loader, ckpt, plot_path, is_first_val):
         self.load_checkpoint(ckpt)
         self.model.eval()
@@ -384,11 +383,9 @@ class U_P3MG(nn.Module):
                 if x0 is not None: x0=x0.to(self.device).double()
                 else: x0 = y.sum(1, keepdim=True).repeat(1, self.N_dim)/(self.M_dim*self.N_dim)
                 
-                # Le modèle retourne X_pred, dynamic, dynamic_lambdas
                 xp, _, _ = self.model(static, None, x0, y, lmbd_override=override)
                 total_loss += self.criterion(xp, xt).item()
 
-                # NEW: Plot de la reconstruction du signal pour la première valeur de lambda testée
                 if is_first_val and i == 0:
                      self.plot_signals_grid_search(xt, xp, val, plot_path)
                      
@@ -401,18 +398,14 @@ class U_P3MG(nn.Module):
         
         for idx, v in enumerate(vals):
             is_first = (idx == 0)
-            # Exécute le test et, si c'est la première valeur (is_first=True), génère le plot du signal
             res[v] = self.run_test_for_lambda(v, self.test_loader, checkpoint_path, out_dir, is_first)
             print(f"Lambda {v}: Loss {res[v]:.4e}")
 
-        # Plot 1: Loss vs Lambda (le plot principal du Grid Search)
         self.plot_grid_search(res) 
         
-        # Enregistrement des résultats bruts dans un fichier log
         log_path = os.path.join(self.path_logs, 'grid_search_results.json')
         try:
             with open(log_path, 'w') as f:
-                # Sauvegarde du dictionnaire {lambda: loss}
                 json.dump({str(k): v for k, v in res.items()}, f, indent=4)
             print(f"[INFO] Résultats Grid Search sauvegardés dans {log_path}")
         except Exception as e:
