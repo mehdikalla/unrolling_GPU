@@ -1,5 +1,0 @@
-[INFO] Using CUDA: Quadro RTX 6000
-[INFO] Mode Random Search: 900 paires générées.
-[INFO] Slurm Task 538: RANDOM -> L=5.05e-05, T=0.41
-L=5.05e-05 T=0.41 : 1.6591e-05
-[INFO] Consolidation...

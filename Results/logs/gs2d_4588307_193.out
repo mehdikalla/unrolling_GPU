@@ -1,5 +1,0 @@
-[INFO] Using CUDA: NVIDIA A100-PCIE-40GB
-[INFO] Mode Random Search: 900 paires générées.
-[INFO] Slurm Task 193: RANDOM -> L=6.29e-04, T=1.03
-L=6.29e-04 T=1.03 : 1.4733e-05
-[INFO] Consolidation...

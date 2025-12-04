@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=8G
 #SBATCH --time=04:30:00
-#SBATCH --array=0-899         
+#SBATCH --array=0-24         
 
 #SBATCH --output=/scratch/mkalla/unrolling_GPU/Results/logs/gs2d_%A_%a.out
 #SBATCH --error=/scratch/mkalla/unrolling_GPU/Results/logs/gs2d_%A_%a.err
@@ -26,5 +26,5 @@ python main.py \
     --gs_max_exp -1.0 \
     --gs_min_tau 0.01 \
     --gs_max_tau 1.99 \
-    --gs_num_points 900 \
+    --gs_num_points 25 \
     --random_search  
