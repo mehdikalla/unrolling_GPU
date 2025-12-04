@@ -8,9 +8,9 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=8G
-#SBATCH --time=10:00:00              # Temps long pour l'entraînement (ajuster)
-#SBATCH --output=/scratch/mkalla/unrolling_GPU/logs/unrolled_%j.out
-#SBATCH --error=/scratch/mkalla/unrolling_GPU/logs/unrolled_%j.err
+#SBATCH --time=02:30:00              # Temps long pour l'entraînement (ajuster)
+#SBATCH --output=/scratch/mkalla/unrolling_GPU/Results/logs/unrolled_%j.out
+#SBATCH --error=/scratch/mkalla/unrolling_GPU/Results/logs/unrolled_%j.err
 
 # -------------------------------------------------------------
 # Configuration ENVIRONNEMENT
@@ -36,8 +36,8 @@ python main.py \
     --device cuda \
     --number_layers 10 \
     --number_pd_layers 10 \
-    --epochs 25 \
-    --lr 5e-3 \
+    --epochs 50 \
+    --lr 1e-2 \
     --train_batch_size 10 
 
 echo "--- Entraînement Unrolled terminé ---"

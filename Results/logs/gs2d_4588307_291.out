@@ -1,0 +1,5 @@
+[INFO] Using CUDA: Tesla V100S-PCIE-32GB
+[INFO] Mode Random Search: 900 paires générées.
+[INFO] Slurm Task 291: RANDOM -> L=1.68e-07, T=1.16
+L=1.68e-07 T=1.16 : 2.5626e-05
+[INFO] Consolidation...
