@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=8G
 #SBATCH --time=04:30:00
-#SBATCH --array=0-24         
+#SBATCH --array=0-999        
 
 #SBATCH --output=/scratch/mkalla/unrolling_GPU/Results/logs/gs2d_%A_%a.out
 #SBATCH --error=/scratch/mkalla/unrolling_GPU/Results/logs/gs2d_%A_%a.err
@@ -24,7 +24,7 @@ python main.py \
     --device cuda \
     --gs_min_exp -7.0 \
     --gs_max_exp -1.0 \
-    --gs_min_tau 0.01 \
-    --gs_max_tau 1.99 \
-    --gs_num_points 25 \
+    --gs_min_tau 0.25 \
+    --gs_max_tau 1.75 \
+    --gs_num_points 1000 \
     --random_search  

@@ -1,4 +1,4 @@
-# src/network.py
+# src/network.py (Version Grid Search 2D - Coupes 1D)
 import os
 import torch
 import torch.nn as nn
@@ -13,7 +13,7 @@ from Dataset.module import MyDataset
 from src.models.P3MG_model import P3MG_model
 from src.models.P3MG_func import P3MGNet
 
-class U_P3MG(nn.Module):
+class U_P3MG():
     def __init__(self, num_layers, num_pd_layers, static_params, initial_x0, train_params, paths, device="cuda", args_dict=None):
         super().__init__()
         self.num_layers = num_layers
@@ -46,6 +46,7 @@ class U_P3MG(nn.Module):
             {'params': other_params, 'lr': self.lr},
             {'params': tau_params, 'lr': self.lr * 5.0}
         ], lr=self.lr)
+        
         self.N_dim, self.M_dim = 100, 100 
 
     def create_loaders(self, need_names: bool = False):
@@ -80,7 +81,6 @@ class U_P3MG(nn.Module):
 
     def _unpack(self, batch):
         if len(batch) == 3: return batch[0], batch[1], batch[2]
-        if len(batch) == 4: return batch[1], batch[2], batch[3]
         return batch[0], batch[1], None
 
     def train(self, need_names=False, checkpoint_path=None, args_dict=None):
@@ -112,6 +112,7 @@ class U_P3MG(nn.Module):
             
             t_loss = sum(losses)/len(losses) if losses else 0
             tr_loss.append(t_loss)
+            
             self.model.eval()
             v_losses = []
             with torch.no_grad():
@@ -170,7 +171,6 @@ class U_P3MG(nn.Module):
         dx = torch.zeros(1, self.N_dim).double().to(self.device)
         dy = torch.zeros(1, self.M_dim).double().to(self.device)
         static = self.p3mg_tmp.init_P3MG(list(self.static_params), dx, dy)
-        
         l_over = torch.tensor(l_val).double().to(self.device)
         t_over = torch.tensor(t_val).double().to(self.device)
         losses = []
@@ -180,35 +180,54 @@ class U_P3MG(nn.Module):
                 xt, y = xt.to(self.device).double(), y.to(self.device).double()
                 if x0 is not None: x0=x0.to(self.device).double()
                 else: x0 = y.sum(1, keepdim=True).repeat(1, self.N_dim)/(self.M_dim*self.N_dim)
-                
                 xp, _, _ = self.model(static, None, x0, y, lmbd_override=l_over, tau_override=t_over)
                 losses.append(self.criterion(xp, xt).item())
-                if save_signal and i == 0:
-                    self.plot_signals_gs_2d(xt, xp, l_val, t_val, plot_path)
+                if save_signal and i == 0: self.plot_signals_gs_2d(xt, xp, l_val, t_val, plot_path)
         return sum(losses)/len(losses) if losses else 0
 
-    def grid_search_2d(self, lambdas, taus, need_names=False, checkpoint_path=None):
+    # ============================
+    # GRID SEARCH 2D AVEC MODE
+    # ============================
+    def grid_search_2d(self, lambdas, taus, need_names=False, checkpoint_path=None, mode="grid"):
         self.create_loaders(need_names)
         out_dir = self.path_plots
         is_distributed = (len(lambdas) == 1 and len(taus) == 1)
         
-        for l in lambdas:
-            for t in taus:
-                loss = self.run_test_2d(l, t, self.test_loader, checkpoint_path, out_dir, save_signal=is_distributed)
-                print(f"L={l:.2e} T={t:.2f} : {loss:.4e}")
-                
-                task_id = os.environ.get('SLURM_ARRAY_TASK_ID', 'local')
-                safe_l = f"{l:.2e}".replace('+','')
-                safe_t = f"{t:.2f}"
-                fname = f'gs_result_L{safe_l}_T{safe_t}_tid{task_id}.json'
-                
-                with open(os.path.join(self.path_logs, fname), 'w') as f:
-                    json.dump({"lambda": l, "tau": t, "loss": loss}, f, indent=4)
+        # LOGIQUE D'ITÉRATION : Grid (Imbriquée) vs Random (Paires)
+        to_test = []
+        if mode == "random" and not is_distributed:
+            # Mode Random (Local) : Paires zippées
+            # En distribué, les listes ont 1 élément donc c'est une paire unique, le zip marche aussi.
+            if len(lambdas) != len(taus):
+                print("[WARN] Mode Random nécessite listes de même taille. Truncating.")
+            for l, t in zip(lambdas, taus):
+                to_test.append((l, t))
+        else:
+            # Mode Grid ou Mode Distribué (1x1) : Produit cartésien
+            # En distribué, 1x1 = 1 paire, donc ça marche aussi.
+            for l in lambdas:
+                for t in taus:
+                    to_test.append((l, t))
 
+        print(f"[INFO] Lancement GS (Mode={mode}, {len(to_test)} points)")
+
+        for l, t in to_test:
+            loss = self.run_test_2d(l, t, self.test_loader, checkpoint_path, out_dir, save_signal=is_distributed)
+            print(f"L={l:.2e} T={t:.2f} : {loss:.4e}")
+            
+            task_id = os.environ.get('SLURM_ARRAY_TASK_ID', 'local')
+            safe_l = f"{l:.2e}".replace('+','')
+            safe_t = f"{t:.2f}"
+            fname = f'gs_result_L{safe_l}_T{safe_t}_tid{task_id}.json'
+            
+            with open(os.path.join(self.path_logs, fname), 'w') as f:
+                json.dump({"lambda": l, "tau": t, "loss": loss}, f, indent=4)
+
+        # Consolidation automatique
         self.consolidate_and_plot_2d_gs()
 
     def consolidate_and_plot_2d_gs(self):
-        print(f"[INFO] Consolidation 2D avec arrondi visuel...")
+        print(f"[INFO] Consolidation...")
         data = []
         jsons = glob.glob(os.path.join(self.path_logs, 'gs_result_*.json'))
         if not jsons: return
@@ -219,89 +238,60 @@ class U_P3MG(nn.Module):
             except: pass
         if not data: return
 
-        # Extraction brute
+        # Extraction Brute
         raw_l = np.array([d['lambda'] for d in data])
         raw_t = np.array([d['tau'] for d in data])
         raw_loss = np.array([d['loss'] for d in data])
 
-        # === CORRECTION "Heatmap Blanche" : Arrondi pour l'affichage ===
-        # On arrondit pour que les valeurs proches tombent dans la même case
-        # Lambda (Log scale): on arrondit le log10
-        l_log = np.log10(raw_l)
-        l_rounded = np.round(l_log, decimals=4)
-        
-        # Tau (Linear scale): on arrondit la valeur
-        t_rounded = np.round(raw_t, decimals=4)
-        
-        # Création des axes uniques basés sur l'arrondi
-        unique_l = np.sort(np.unique(l_rounded))
-        unique_t = np.sort(np.unique(t_rounded))
-        
-        # Si trop peu de points uniques, on ne peut pas faire de meshgrid
-        if len(unique_l) < 2 or len(unique_t) < 2:
-            return
+        best_idx = np.argmin(raw_loss)
+        best_l, best_t, best_loss = raw_l[best_idx], raw_t[best_idx], raw_loss[best_idx]
 
-        # Remplissage de la grille
-        grid = np.zeros((len(unique_t), len(unique_l))) + np.nan
-        best_loss, best_pair = float('inf'), (None, None)
-
-        for i in range(len(data)):
-            loss = raw_loss[i]
-            if loss < best_loss:
-                best_loss = loss
-                best_pair = (raw_l[i], raw_t[i])
-            
-            # Mapping vers la grille arrondie
-            idx_l = np.searchsorted(unique_l, l_rounded[i])
-            idx_t = np.searchsorted(unique_t, t_rounded[i])
-            
-            # Protection d'index (normalement inutile avec unique)
-            if idx_l < len(unique_l) and idx_t < len(unique_t):
-                grid[idx_t, idx_l] = loss
-
-        # Plot Heatmap
-        plt.figure(figsize=(10, 8))
-        # Reconversion en valeurs réelles pour les axes (10^L)
-        X, Y = np.meshgrid(10**unique_l, unique_t)
-        
-        # Log10(Loss) pour le contraste
-        # On remplit les trous (NaN) avec le max pour ne pas faire de trous blancs
-        valid_max = np.nanmax(grid)
-        grid_filled = np.where(np.isnan(grid), valid_max, grid)
-        
-        plt.pcolormesh(X, Y, np.log10(grid_filled), shading='auto', cmap='viridis')
-        plt.colorbar(label='Log10(Loss)')
-        
+        # --- Plot 1: Projection Loss vs Lambda (Scatter) ---
+        plt.figure(figsize=(10, 6))
+        # Couleur par Tau pour voir l'influence du 2e paramètre
+        plt.scatter(raw_l, raw_loss, c=raw_t, cmap='viridis', label='Points', alpha=0.7)
+        plt.colorbar(label=r'$\tau$')
+        plt.plot(best_l, best_loss, 'r*', markersize=15, label='Optimum')
         plt.xscale('log')
-        plt.xlabel(r'$\lambda$ (Log)')
-        plt.ylabel(r'$\tau$ (Linear)')
-        plt.title(f'GS 2D (Best: L={best_pair[0]:.2e}, T={best_pair[1]:.2f})')
-        plt.plot(best_pair[0], best_pair[1], 'r*', markersize=15, markeredgecolor='white')
-        
-        plt.savefig(os.path.join(self.path_save, 'GLOBAL_GS_HEATMAP.png'))
+        plt.xlabel(r'$\lambda$')
+        plt.ylabel('Loss')
+        plt.title('Projection : Loss vs Lambda')
+        plt.legend()
+        plt.grid(True, which="both", ls="--", alpha=0.5)
+        plt.savefig(os.path.join(self.path_save, 'GLOBAL_GS_SCATTER_LAMBDA.png'))
         plt.close()
-        print("[SUCCESS] Heatmap générée.")
-        
-        if best_pair[0] is not None:
-            pat_l = f"{best_pair[0]:.2e}".replace('+','')
-            pat_t = f"{best_pair[1]:.2f}"
-            # On cherche avec un pattern large car l'arrondi affichage != float exact fichier
-            # On cherche le fichier qui correspond à ce best pair
-            possible_files = glob.glob(os.path.join(self.path_plots, f"signal_L{pat_l}*T{pat_t}*.png"))
-            if possible_files:
-                shutil.copy(possible_files[0], os.path.join(self.path_save, 'GLOBAL_BEST_SIGNAL.png'))
-                print("[SUCCESS] Signal optimal copié.")
+
+        # --- Plot 2: Projection Loss vs Tau (Scatter) ---
+        plt.figure(figsize=(10, 6))
+        # Couleur par Log(Lambda)
+        plt.scatter(raw_t, raw_loss, c=np.log10(raw_l), cmap='plasma', label='Points', alpha=0.7)
+        plt.colorbar(label=r'$\log_{10}(\lambda)$')
+        plt.plot(best_t, best_loss, 'r*', markersize=15, label='Optimum')
+        plt.xlabel(r'$\tau$')
+        plt.ylabel('Loss')
+        plt.title('Projection : Loss vs Tau')
+        plt.legend()
+        plt.grid(True, which="both", ls="--", alpha=0.5)
+        plt.savefig(os.path.join(self.path_save, 'GLOBAL_GS_SCATTER_TAU.png'))
+        plt.close()
+
+        # Copie Signal
+        pat_l = f"{best_l:.2e}".replace('+','')
+        pat_t = f"{best_t:.2f}"
+        sig_glob = os.path.join(self.path_plots, f"signal_L{pat_l}*T{pat_t}*.png")
+        found = glob.glob(sig_glob)
+        if found:
+            shutil.copy(found[0], os.path.join(self.path_save, 'GLOBAL_BEST_SIGNAL.png'))
+            print("[SUCCESS] Signal optimal copié.")
 
     # --- PLOT UTILS ---
     def plot_losses(self, tr, val):
         plt.figure(); plt.plot(tr, label='T'); plt.plot(val, label='V'); plt.legend()
         plt.savefig(os.path.join(self.path_plots, 'loss.png')); plt.close()
-
     def plot_signals(self, true, pred, epoch):
         for i in range(min(3, true.size(0))):
             plt.figure(figsize=(10,3)); plt.plot(true[i].cpu().numpy()); plt.plot(pred[i].detach().cpu().numpy(), '--')
             plt.title(f'Ep {epoch} S {i}'); plt.savefig(os.path.join(self.path_plots, f'sig_ep{epoch}_s{i}.png')); plt.close()
-
     def plot_best_signals(self, path):
         ckpt = torch.load(path, map_location=self.device)
         self.model.load_state_dict(ckpt['model_state_dict'])
@@ -317,14 +307,12 @@ class U_P3MG(nn.Module):
             plt.figure(figsize=(10,3)); plt.plot(xt[0].cpu().numpy()); plt.plot(xp[0].detach().cpu().numpy(), '--')
             plt.title('Best Model'); plt.savefig(os.path.join(self.path_plots, 'best_sig.png')); plt.close()
             break
-
     def plot_signals_gs_2d(self, true, pred, l_val, t_val, path):
         pat_l = f"{l_val:.2e}".replace('+','')
         pat_t = f"{t_val:.2f}"
         fname = f"signal_L{pat_l}_T{pat_t}.png"
         plt.figure(figsize=(10,3)); plt.plot(true[0].cpu().numpy()); plt.plot(pred[0].detach().cpu().numpy(), '--')
         plt.title(f'L={l_val:.2e} T={t_val:.2f}'); plt.savefig(os.path.join(path, fname)); plt.close()
-
     def plot_learned_params_evolution(self, path):
         if not os.path.isfile(path): return
         ckpt = torch.load(path, map_location=self.device)
