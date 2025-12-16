@@ -1,8 +1,8 @@
 import torch as tc
 import torch.nn as nn
-from src.utils import*
+from src.utils.functions import*
 from src.models.PD_func import PrimalDualNet
-from src.models.PD_model import PD_model # NOTE: Doit être utilisé comme un callable
+from src.models.PD_model import PD_model 
 
 class P3MGNet(nn.Module):
     def __init__(self, num_pd_layers: int = 3):

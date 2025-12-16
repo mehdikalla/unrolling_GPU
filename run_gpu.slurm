@@ -34,10 +34,10 @@ echo "--- Démarrage de l'entraînement Unrolled ---"
 python main.py \
     --function train \
     --device cuda \
-    --number_layers 10 \
-    --number_pd_layers 10 \
-    --epochs 50 \
-    --lr 1e-2 \
+    --number_layers 5 \
+    --number_pd_layers 5 \
+    --epochs 5 \
+    --lr 8e-3 \
     --train_batch_size 10 
 
 echo "--- Entraînement Unrolled terminé ---"

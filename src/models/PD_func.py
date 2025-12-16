@@ -1,7 +1,7 @@
 # p3mg_classes.py
 import torch as tc
 import torch.nn as nn
-from src.utils import*
+from src.utils.functions import*
 
 
 class PrimalDualNet(nn.Module):

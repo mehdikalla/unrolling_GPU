@@ -1,4 +1,4 @@
-# src/network.py (Version Grid Search 2D - Coupes 1D)
+# src/network.py (Mise à jour avec appels à visualization.py)
 import os
 import torch
 import torch.nn as nn
@@ -6,14 +6,16 @@ import torch.optim as optim
 import matplotlib.pyplot as plt
 import numpy as np
 import json 
-import glob
-import shutil
+
 from torch.utils.data import DataLoader
 from Dataset.module import MyDataset
+
 from src.models.P3MG_model import P3MG_model
 from src.models.P3MG_func import P3MGNet
+from src.utils.visualization import consolidate_and_plot_2d_gs, plot_signals_gs_2d 
 
-class U_P3MG():
+
+class U_P3MG(nn.Module):
     def __init__(self, num_layers, num_pd_layers, static_params, initial_x0, train_params, paths, device="cuda", args_dict=None):
         super().__init__()
         self.num_layers = num_layers
@@ -46,7 +48,6 @@ class U_P3MG():
             {'params': other_params, 'lr': self.lr},
             {'params': tau_params, 'lr': self.lr * 5.0}
         ], lr=self.lr)
-        
         self.N_dim, self.M_dim = 100, 100 
 
     def create_loaders(self, need_names: bool = False):
@@ -86,11 +87,9 @@ class U_P3MG():
     def train(self, need_names=False, checkpoint_path=None, args_dict=None):
         self.create_loaders(need_names)
         start_ep = self.load_checkpoint(checkpoint_path)
-        
         dx = torch.zeros(1, self.N_dim).double().to(self.device)
         dy = torch.zeros(1, self.M_dim).double().to(self.device)
         static = self.p3mg_tmp.init_P3MG(list(self.static_params), dx, dy)
-        
         tr_loss, val_loss = [], []
         best_vloss = float('inf')
         current_ckpt_path = None
@@ -106,13 +105,11 @@ class U_P3MG():
                 self.optimizer.zero_grad()
                 xp, _, _ = self.model(static, None, x0, y)
                 loss = self.criterion(xp, xt)
-                loss.backward()
-                self.optimizer.step()
+                loss.backward(); self.optimizer.step()
                 losses.append(loss.item())
             
             t_loss = sum(losses)/len(losses) if losses else 0
             tr_loss.append(t_loss)
-            
             self.model.eval()
             v_losses = []
             with torch.no_grad():
@@ -123,14 +120,11 @@ class U_P3MG():
                     else: x0 = y.sum(1, keepdim=True).repeat(1, self.N_dim)/(self.M_dim*self.N_dim)
                     xp, _, _ = self.model(static, None, x0, y)
                     v_losses.append(self.criterion(xp, xt).item())
-            
             v_loss = sum(v_losses)/len(v_losses) if v_losses else 0
             val_loss.append(v_loss)
             print(f"Ep {ep+1}: Train={t_loss:.4e} Val={v_loss:.4e}")
-            
             current_ckpt_path = os.path.join(self.path_checkpoints, f'checkpoint_epoch{ep+1}.pt')
             torch.save({'epoch': ep+1, 'model_state_dict': self.model.state_dict(), 'train_losses': tr_loss}, current_ckpt_path)
-            
             if v_loss < best_vloss:
                 best_vloss = v_loss
                 torch.save({'epoch': ep+1, 'model_state_dict': self.model.state_dict()}, os.path.join(self.path_checkpoints, 'best_model.pt'))
@@ -150,8 +144,7 @@ class U_P3MG():
         dx = torch.zeros(1, self.N_dim).double().to(self.device)
         dy = torch.zeros(1, self.M_dim).double().to(self.device)
         static = self.p3mg_tmp.init_P3MG(list(self.static_params), dx, dy)
-        self.model.eval()
-        losses = []
+        self.model.eval(); losses = []
         with torch.no_grad():
             for i, batch in enumerate(self.test_loader):
                 xt, y, x0 = self._unpack(batch)
@@ -166,8 +159,7 @@ class U_P3MG():
         return avg
 
     def run_test_2d(self, l_val, t_val, loader, ckpt, plot_path, save_signal=False):
-        self.load_checkpoint(ckpt)
-        self.model.eval()
+        self.load_checkpoint(ckpt); self.model.eval()
         dx = torch.zeros(1, self.N_dim).double().to(self.device)
         dy = torch.zeros(1, self.M_dim).double().to(self.device)
         static = self.p3mg_tmp.init_P3MG(list(self.static_params), dx, dy)
@@ -182,116 +174,53 @@ class U_P3MG():
                 else: x0 = y.sum(1, keepdim=True).repeat(1, self.N_dim)/(self.M_dim*self.N_dim)
                 xp, _, _ = self.model(static, None, x0, y, lmbd_override=l_over, tau_override=t_over)
                 losses.append(self.criterion(xp, xt).item())
-                if save_signal and i == 0: self.plot_signals_gs_2d(xt, xp, l_val, t_val, plot_path)
+                if save_signal and i == 0: plot_signals_gs_2d(xt, xp, l_val, t_val, plot_path) # Appel externe
         return sum(losses)/len(losses) if losses else 0
 
-    # ============================
-    # GRID SEARCH 2D AVEC MODE
-    # ============================
     def grid_search_2d(self, lambdas, taus, need_names=False, checkpoint_path=None, mode="grid"):
-        self.create_loaders(need_names)
-        out_dir = self.path_plots
+        self.create_loaders(need_names); out_dir = self.path_plots
         is_distributed = (len(lambdas) == 1 and len(taus) == 1)
         
-        # LOGIQUE D'ITÉRATION : Grid (Imbriquée) vs Random (Paires)
         to_test = []
         if mode == "random" and not is_distributed:
-            # Mode Random (Local) : Paires zippées
-            # En distribué, les listes ont 1 élément donc c'est une paire unique, le zip marche aussi.
-            if len(lambdas) != len(taus):
-                print("[WARN] Mode Random nécessite listes de même taille. Truncating.")
-            for l, t in zip(lambdas, taus):
-                to_test.append((l, t))
+            for l, t in zip(lambdas, taus): to_test.append((l, t))
         else:
-            # Mode Grid ou Mode Distribué (1x1) : Produit cartésien
-            # En distribué, 1x1 = 1 paire, donc ça marche aussi.
             for l in lambdas:
-                for t in taus:
-                    to_test.append((l, t))
+                for t in taus: to_test.append((l, t))
 
         print(f"[INFO] Lancement GS (Mode={mode}, {len(to_test)} points)")
 
         for l, t in to_test:
             loss = self.run_test_2d(l, t, self.test_loader, checkpoint_path, out_dir, save_signal=is_distributed)
             print(f"L={l:.2e} T={t:.2f} : {loss:.4e}")
-            
             task_id = os.environ.get('SLURM_ARRAY_TASK_ID', 'local')
-            safe_l = f"{l:.2e}".replace('+','')
-            safe_t = f"{t:.2f}"
+            safe_l = f"{l:.2e}".replace('+',''); safe_t = f"{t:.2f}"
             fname = f'gs_result_L{safe_l}_T{safe_t}_tid{task_id}.json'
-            
             with open(os.path.join(self.path_logs, fname), 'w') as f:
                 json.dump({"lambda": l, "tau": t, "loss": loss}, f, indent=4)
 
-        # Consolidation automatique
-        self.consolidate_and_plot_2d_gs()
+        # Appel de la fonction externe
+        consolidate_and_plot_2d_gs(self.path_save, self.path_logs, self.path_plots)
 
-    def consolidate_and_plot_2d_gs(self):
-        print(f"[INFO] Consolidation...")
-        data = []
-        jsons = glob.glob(os.path.join(self.path_logs, 'gs_result_*.json'))
-        if not jsons: return
-
-        for j in jsons:
-            try:
-                with open(j, 'r') as f: data.append(json.load(f))
-            except: pass
-        if not data: return
-
-        # Extraction Brute
-        raw_l = np.array([d['lambda'] for d in data])
-        raw_t = np.array([d['tau'] for d in data])
-        raw_loss = np.array([d['loss'] for d in data])
-
-        best_idx = np.argmin(raw_loss)
-        best_l, best_t, best_loss = raw_l[best_idx], raw_t[best_idx], raw_loss[best_idx]
-
-        # --- Plot 1: Projection Loss vs Lambda (Scatter) ---
-        plt.figure(figsize=(10, 6))
-        # Couleur par Tau pour voir l'influence du 2e paramètre
-        plt.scatter(raw_l, raw_loss, c=raw_t, cmap='viridis', label='Points', alpha=0.7)
-        plt.colorbar(label=r'$\tau$')
-        plt.plot(best_l, best_loss, 'r*', markersize=15, label='Optimum')
-        plt.xscale('log')
-        plt.xlabel(r'$\lambda$')
-        plt.ylabel('Loss')
-        plt.title('Projection : Loss vs Lambda')
-        plt.legend()
-        plt.grid(True, which="both", ls="--", alpha=0.5)
-        plt.savefig(os.path.join(self.path_save, 'GLOBAL_GS_SCATTER_LAMBDA.png'))
-        plt.close()
-
-        # --- Plot 2: Projection Loss vs Tau (Scatter) ---
-        plt.figure(figsize=(10, 6))
-        # Couleur par Log(Lambda)
-        plt.scatter(raw_t, raw_loss, c=np.log10(raw_l), cmap='plasma', label='Points', alpha=0.7)
-        plt.colorbar(label=r'$\log_{10}(\lambda)$')
-        plt.plot(best_t, best_loss, 'r*', markersize=15, label='Optimum')
-        plt.xlabel(r'$\tau$')
-        plt.ylabel('Loss')
-        plt.title('Projection : Loss vs Tau')
-        plt.legend()
-        plt.grid(True, which="both", ls="--", alpha=0.5)
-        plt.savefig(os.path.join(self.path_save, 'GLOBAL_GS_SCATTER_TAU.png'))
-        plt.close()
-
-        # Copie Signal
-        pat_l = f"{best_l:.2e}".replace('+','')
-        pat_t = f"{best_t:.2f}"
-        sig_glob = os.path.join(self.path_plots, f"signal_L{pat_l}*T{pat_t}*.png")
-        found = glob.glob(sig_glob)
-        if found:
-            shutil.copy(found[0], os.path.join(self.path_save, 'GLOBAL_BEST_SIGNAL.png'))
-            print("[SUCCESS] Signal optimal copié.")
-
-    # --- PLOT UTILS ---
+    # --- PLOT UTILS (Méthodes de classe conservées) ---
     def plot_losses(self, tr, val):
-        plt.figure(); plt.plot(tr, label='T'); plt.plot(val, label='V'); plt.legend()
-        plt.savefig(os.path.join(self.path_plots, 'loss.png')); plt.close()
+        plt.figure()
+        plt.plot(tr, label='T')
+        plt.plot(val, label='V')
+        plt.legend()
+        plt.grid()
+        plt.savefig(os.path.join(self.path_plots, 'loss.png'))
+        plt.close()
+    
     def plot_signals(self, true, pred, epoch):
         for i in range(min(3, true.size(0))):
-            plt.figure(figsize=(10,3)); plt.plot(true[i].cpu().numpy()); plt.plot(pred[i].detach().cpu().numpy(), '--')
-            plt.title(f'Ep {epoch} S {i}'); plt.savefig(os.path.join(self.path_plots, f'sig_ep{epoch}_s{i}.png')); plt.close()
+            plt.figure(figsize=(10,3))
+            plt.plot(true[i].cpu().numpy())
+            plt.plot(pred[i].detach().cpu().numpy(), '--')
+            plt.grid()
+            plt.title(f'Ep {epoch} S {i}')
+            plt.savefig(os.path.join(self.path_plots, f'sig_ep{epoch}_s{i}.png')); plt.close()
+    
     def plot_best_signals(self, path):
         ckpt = torch.load(path, map_location=self.device)
         self.model.load_state_dict(ckpt['model_state_dict'])
@@ -304,15 +233,14 @@ class U_P3MG():
             dx = torch.zeros(1,self.N_dim).double().to(self.device); dy=torch.zeros(1,self.M_dim).double().to(self.device)
             st = self.p3mg_tmp.init_P3MG(list(self.static_params), dx, dy)
             with torch.no_grad(): xp, _, _ = self.model(st, None, x0, y)
-            plt.figure(figsize=(10,3)); plt.plot(xt[0].cpu().numpy()); plt.plot(xp[0].detach().cpu().numpy(), '--')
-            plt.title('Best Model'); plt.savefig(os.path.join(self.path_plots, 'best_sig.png')); plt.close()
-            break
-    def plot_signals_gs_2d(self, true, pred, l_val, t_val, path):
-        pat_l = f"{l_val:.2e}".replace('+','')
-        pat_t = f"{t_val:.2f}"
-        fname = f"signal_L{pat_l}_T{pat_t}.png"
-        plt.figure(figsize=(10,3)); plt.plot(true[0].cpu().numpy()); plt.plot(pred[0].detach().cpu().numpy(), '--')
-        plt.title(f'L={l_val:.2e} T={t_val:.2f}'); plt.savefig(os.path.join(path, fname)); plt.close()
+            plt.figure(figsize=(10,3))
+            plt.plot(xt[0].cpu().numpy())
+            plt.plot(xp[0].detach().cpu().numpy(), '--')
+            plt.title('Best Model')
+            plt.grid()
+            plt.savefig(os.path.join(self.path_plots, 'best_sig.png'))
+            plt.close(); break
+   
     def plot_learned_params_evolution(self, path):
         if not os.path.isfile(path): return
         ckpt = torch.load(path, map_location=self.device)
@@ -333,5 +261,7 @@ class U_P3MG():
             plt.figure(figsize=(10,6)); plt.plot(range(1, N+1), lmbd_vals, 'o-'); plt.savefig(os.path.join(out_dir, 'learnt_lambda_curve.png')); plt.close()
         if tau_rows:
             tau_mat = np.array(tau_rows)
-            plt.figure(figsize=(12, 6)); plt.imshow(tau_mat, aspect='auto', cmap='viridis', origin='lower', extent=[0.5, M+0.5, 0.5, N+0.5])
-            plt.colorbar(); plt.savefig(os.path.join(out_dir, 'learnt_tau_heatmap.png')); plt.close()
+            plt.figure(figsize=(12, 6))
+            plt.imshow(tau_mat, aspect='auto', cmap='viridis', origin='lower', extent=[0.5, M+0.5, 0.5, N+0.5])
+            plt.colorbar()
+            plt.savefig(os.path.join(out_dir, 'learnt_tau_heatmap.png')); plt.close()
