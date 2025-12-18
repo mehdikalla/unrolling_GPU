@@ -6,7 +6,7 @@ import json
 import glob
 import shutil
 
-def consolidate_and_plot_2d_gs(path_save: str, path_logs: str, path_plots: str):
+def plot_gs_loss_params(path_save: str, path_logs: str, path_plots: str):
     """
     Lit tous les fichiers JSON du Grid Search, trouve l'optimum,
     et génère les deux graphes de projection (Loss vs Lambda et Loss vs Tau).
@@ -77,7 +77,7 @@ def consolidate_and_plot_2d_gs(path_save: str, path_logs: str, path_plots: str):
     print(f"[SUCCESS] Courbes générées. Best: L={best_l:.2e}, T={best_t:.2f}")
 
 
-def plot_signals_gs_2d(true, pred, l_val, t_val, path):
+def plot_signals_gs(true, pred, l_val, t_val, path):
     """ Plot un signal unique pour un point (Lambda, Tau) donné. """
     pat_l = f"{l_val:.2e}".replace('+','')
     pat_t = f"{t_val:.2f}"
@@ -85,5 +85,7 @@ def plot_signals_gs_2d(true, pred, l_val, t_val, path):
     plt.figure(figsize=(10,3)); plt.plot(true[0].cpu().numpy(), label='True')
     plt.plot(pred[0].detach().cpu().numpy(), '--', label='Pred')
     plt.grid()
-    plt.title(f'L={l_val:.2e} T={t_val:.2f}'); plt.legend()
-    plt.savefig(os.path.join(path, fname)); plt.close()
+    plt.title(f'L={l_val:.2e} T={t_val:.2f}')
+    plt.legend()
+    plt.savefig(os.path.join(path, fname))
+    plt.close()

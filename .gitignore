@@ -1,6 +1,7 @@
 Results/baseline/*
 Results/unrolled/*
 Results/logs/*
+Results/network_test/*
 Results/logs_old/
 
 Dataset/__pycache__/
@@ -11,4 +12,5 @@ src/models/__pycache__/
 !Results/baseline/.gitkeep
 !Results/unrolled/.gitkeep
 !Results/logs/.gitkeep
+!Results/network_test/.gitkeep
 gpu_env/

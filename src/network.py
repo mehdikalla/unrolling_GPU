@@ -1,19 +1,19 @@
-# src/network.py (Mise à jour avec appels à visualization.py)
+# Fichier: src/network.py
 import os
+import sys
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import matplotlib.pyplot as plt
-import numpy as np
 import json 
+import numpy as np
 
 from torch.utils.data import DataLoader
 from Dataset.module import MyDataset
 
 from src.models.P3MG_model import P3MG_model
 from src.models.P3MG_func import P3MGNet
-from src.utils.visualization import consolidate_and_plot_2d_gs, plot_signals_gs_2d 
-
+from src.utils.visualization import plot_signals_gs, plot_signals_gs 
+from src.utils.plotting_manager import PlottingManager
 
 class U_P3MG(nn.Module):
     def __init__(self, num_layers, num_pd_layers, static_params, initial_x0, train_params, paths, device="cuda", args_dict=None):
@@ -50,6 +50,17 @@ class U_P3MG(nn.Module):
         ], lr=self.lr)
         self.N_dim, self.M_dim = 100, 100 
 
+        self.plot_manager = PlottingManager(
+            model=self.model, 
+            p3mg_tmp=self.p3mg_tmp, 
+            val_loader=None, 
+            N_dim=self.N_dim, 
+            M_dim=self.M_dim, 
+            static_params=self.static_params, 
+            device=self.device, 
+            path_plots=self.path_plots
+        )
+
     def create_loaders(self, need_names: bool = False):
         try:
             train_ds = MyDataset(self.path_train, self.initial_x0.numpy() if self.initial_x0 is not None else None, return_name=need_names)
@@ -62,6 +73,11 @@ class U_P3MG(nn.Module):
             
             if hasattr(train_ds, 'X_true'): self.N_dim = train_ds.X_true.shape[1]
             if hasattr(train_ds, 'Y'): self.M_dim = train_ds.Y.shape[1]
+
+            self.plot_manager.val_loader = self.val_loader
+            self.plot_manager.N_dim = self.N_dim
+            self.plot_manager.M_dim = self.M_dim
+            
         except Exception as e:
             print(f"[WARN] Loaders init: {e}")
 
@@ -71,14 +87,43 @@ class U_P3MG(nn.Module):
             with open(os.path.join(self.path_logs, filename), 'w') as f: json.dump(clean, f, indent=4)
         except: pass
 
-    def load_checkpoint(self, path):
-        if path and os.path.isfile(path):
-            print(f"[INFO] Loading: {path}")
-            ckpt = torch.load(path, map_location=self.device)
-            self.model.load_state_dict(ckpt['model_state_dict'])
-            if 'optimizer_state_dict' in ckpt: self.optimizer.load_state_dict(ckpt['optimizer_state_dict'])
-            return ckpt.get('epoch', 0)
-        return 0
+    def load_checkpoint(self, checkpoint_path):
+        """
+        Charge les poids du modèle de manière robuste.
+        Gère les cas CPU/GPU et les structures de dictionnaire.
+        """
+        if checkpoint_path is None or not os.path.exists(checkpoint_path):
+            print("[WARNING] Aucun checkpoint valide fourni. Le modèle utilise ses poids d'initialisation (aléatoires).")
+            return
+
+        print(f"[LOADING] Chargement du checkpoint : {checkpoint_path}")
+        
+        try:
+            # 1. Charger le fichier en gérant le device (évite les erreurs CUDA out of memory ou device mismatch)
+            checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+
+            # 2. Extraire le state_dict
+            # Parfois on sauvegarde tout le dict {'epoch': 10, 'state_dict': ...}, parfois juste les poids.
+            if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+                state_dict = checkpoint['model_state_dict']
+                # Optionnel : Récupérer l'époque si besoin
+                # start_epoch = checkpoint.get('epoch', 0)
+                # print(f"   -> Checkpoint de l'époque {start_epoch}")
+            elif isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
+                 state_dict = checkpoint['state_dict'] # Convention PyTorch Lightning parfois
+            else:
+                # Supposons que c'est directement le state_dict
+                state_dict = checkpoint
+
+            # 3. Chargement strict dans le modèle
+            # strict=True (défaut) crashe si les clés ne correspondent pas exactement. C'est ce qu'on veut pour être sûr !
+            self.model.load_state_dict(state_dict, strict=True)
+            
+            print(f"[SUCCESS] Poids chargés avec succès !")
+
+        except Exception as e:
+            print(f"\n[ERREUR FATALE] Impossible de charger le checkpoint.\nErreur : {e}")
+            sys.exit(1)
 
     def _unpack(self, batch):
         if len(batch) == 3: return batch[0], batch[1], batch[2]
@@ -128,35 +173,129 @@ class U_P3MG(nn.Module):
             if v_loss < best_vloss:
                 best_vloss = v_loss
                 torch.save({'epoch': ep+1, 'model_state_dict': self.model.state_dict()}, os.path.join(self.path_checkpoints, 'best_model.pt'))
-            self.plot_signals(xt, xp, ep)
+            
+            self.plot_manager.plot_signals(xt, xp, ep)
 
-        self.plot_losses(tr_loss, val_loss)
+        self.plot_manager.plot_losses(tr_loss, val_loss)
         best_path = os.path.join(self.path_checkpoints, 'best_model.pt')
         if not os.path.exists(best_path) and current_ckpt_path: best_path = current_ckpt_path
         if os.path.exists(best_path):
-            self.plot_learned_params_evolution(best_path)
-            self.plot_best_signals(best_path)
+            self.plot_manager.plot_learned_params_evolution(best_path)
+            self.plot_manager.plot_best_signals(best_path)
         return tr_loss, val_loss
 
     def test(self, need_names=False, checkpoint_path=None):
+        """
+        Teste le modèle, affiche les stats et plot le MEILLEUR et le PIRE signal.
+        """
         self.load_checkpoint(checkpoint_path)
         self.create_loaders(need_names)
+        
         dx = torch.zeros(1, self.N_dim).double().to(self.device)
         dy = torch.zeros(1, self.M_dim).double().to(self.device)
         static = self.p3mg_tmp.init_P3MG(list(self.static_params), dx, dy)
-        self.model.eval(); losses = []
+        
+        self.model.eval()
+        all_losses = []
+        
+        # Variables pour traquer le meilleur et le pire
+        best_mse = float('inf')
+        worst_mse = -1.0
+        
+        best_pair = None  # (xt, xp)
+        worst_pair = None # (xt, xp)
+        
+        print(f"[INFO] Démarrage du test sur {len(self.test_loader.dataset)} échantillons...")
+
         with torch.no_grad():
             for i, batch in enumerate(self.test_loader):
                 xt, y, x0 = self._unpack(batch)
                 xt, y = xt.to(self.device).double(), y.to(self.device).double()
                 if x0 is not None: x0=x0.to(self.device).double()
                 else: x0 = y.sum(1, keepdim=True).repeat(1, self.N_dim)/(self.M_dim*self.N_dim)
+                
                 xp, _, _ = self.model(static, None, x0, y)
-                losses.append(self.criterion(xp, xt).item())
-                if i==0: self.plot_signals(xt, xp, 'test')
-        avg = sum(losses)/len(losses) if losses else 0
-        print(f"[TEST] Loss: {avg:.4e}")
-        return avg
+                
+                # Calcul de la MSE par échantillon (batch_size,)
+                # (batch, N) -> (xp - xt)**2 -> mean sur dim 1
+                sample_losses = torch.mean((xp - xt)**2, dim=1)
+                
+                # --- LOGIQUE DE RECHERCHE MIN/MAX ---
+                
+                # 1. Trouver le min et max dans ce batch
+                batch_min_val, batch_min_idx = torch.min(sample_losses, dim=0)
+                batch_max_val, batch_max_idx = torch.max(sample_losses, dim=0)
+                
+                # 2. Mettre à jour le BEST global
+                if batch_min_val.item() < best_mse:
+                    best_mse = batch_min_val.item()
+                    # On clone et détache pour stocker en mémoire CPU sans casser le graphe ou saturer le GPU
+                    best_pair = (
+                        xt[batch_min_idx].unsqueeze(0).cpu(), 
+                        xp[batch_min_idx].unsqueeze(0).cpu()
+                    )
+
+                # 3. Mettre à jour le WORST global (Utile pour debugger !)
+                if batch_max_val.item() > worst_mse:
+                    worst_mse = batch_max_val.item()
+                    worst_pair = (
+                        xt[batch_max_idx].unsqueeze(0).cpu(), 
+                        xp[batch_max_idx].unsqueeze(0).cpu()
+                    )
+
+                # Stockage pour les stats globales
+                all_losses.extend(sample_losses.cpu().numpy().tolist())
+
+        # --- FIN DE BOUCLE : PLOTTING ---
+        
+        if best_pair is not None:
+            print(f"[RESULT] Meilleure MSE trouvée : {best_mse:.2e}")
+            # On renvoie sur le device pour le plot (si ta fonction plot attend du GPU)
+            # Sinon laisse en CPU selon ta fonction plot_manager
+            xt_best, xp_best = best_pair
+            self.plot_manager.plot_signals(xt_best, xp_best, 'test_BEST_mse_{:.2e}'.format(best_mse))
+            
+        if worst_pair is not None:
+            print(f"[RESULT] Pire MSE trouvée : {worst_mse:.2e}")
+            xt_worst, xp_worst = worst_pair
+            self.plot_manager.plot_signals(xt_worst, xp_worst, 'test_WORST_mse_{:.2e}'.format(worst_mse))
+        # Calcul des Statistiques
+        losses_arr = np.array(all_losses)
+        mean_val = np.mean(losses_arr)
+        std_val  = np.std(losses_arr)
+        min_val  = np.min(losses_arr)
+        max_val  = np.max(losses_arr)
+        count    = len(losses_arr)
+
+        # Création du Tableau (String)
+        table_str = (
+            f"\n"
+            f"+-----------------------------------------+\n"
+            f"|        RESULTATS DU TEST SET            |\n"
+            f"+-----------------------+-----------------+\n"
+            f"| Metrique              | Valeur          |\n"
+            f"+-----------------------+-----------------+\n"
+            f"| Nombre d'echantillons | {count:<15} |\n"
+            f"| Moyenne (MSE)         | {mean_val:<15.4e} |\n"
+            f"| Ecart-Type (Std)      | {std_val:<15.4e} |\n"
+            f"| Minimum (MSE)         | {min_val:<15.4e} |\n"
+            f"| Maximum (MSE)         | {max_val:<15.4e} |\n"
+            f"+-----------------------+-----------------+\n"
+        )
+        
+        # 1. Affichage console
+        print(table_str)
+        
+        # 2. Sauvegarde fichier texte local
+        table_path = os.path.join(self.path_logs, 'test_results_table.txt')
+        with open(table_path, 'w') as f:
+            f.write(table_str)
+        print(f"[INFO] Tableau sauvegardé dans : {table_path}")
+
+        # 3. Plot de l'histogramme
+        self.plot_manager.plot_test_error_distribution(losses_arr)
+        
+        return mean_val
 
     def run_test_2d(self, l_val, t_val, loader, ckpt, plot_path, save_signal=False):
         self.load_checkpoint(ckpt); self.model.eval()
@@ -174,7 +313,7 @@ class U_P3MG(nn.Module):
                 else: x0 = y.sum(1, keepdim=True).repeat(1, self.N_dim)/(self.M_dim*self.N_dim)
                 xp, _, _ = self.model(static, None, x0, y, lmbd_override=l_over, tau_override=t_over)
                 losses.append(self.criterion(xp, xt).item())
-                if save_signal and i == 0: plot_signals_gs_2d(xt, xp, l_val, t_val, plot_path) # Appel externe
+                if save_signal and i == 0: plot_signals_gs(xt, xp, l_val, t_val, plot_path) 
         return sum(losses)/len(losses) if losses else 0
 
     def grid_search_2d(self, lambdas, taus, need_names=False, checkpoint_path=None, mode="grid"):
@@ -199,69 +338,4 @@ class U_P3MG(nn.Module):
             with open(os.path.join(self.path_logs, fname), 'w') as f:
                 json.dump({"lambda": l, "tau": t, "loss": loss}, f, indent=4)
 
-        # Appel de la fonction externe
-        consolidate_and_plot_2d_gs(self.path_save, self.path_logs, self.path_plots)
-
-    # --- PLOT UTILS (Méthodes de classe conservées) ---
-    def plot_losses(self, tr, val):
-        plt.figure()
-        plt.plot(tr, label='T')
-        plt.plot(val, label='V')
-        plt.legend()
-        plt.grid()
-        plt.savefig(os.path.join(self.path_plots, 'loss.png'))
-        plt.close()
-    
-    def plot_signals(self, true, pred, epoch):
-        for i in range(min(3, true.size(0))):
-            plt.figure(figsize=(10,3))
-            plt.plot(true[i].cpu().numpy())
-            plt.plot(pred[i].detach().cpu().numpy(), '--')
-            plt.grid()
-            plt.title(f'Ep {epoch} S {i}')
-            plt.savefig(os.path.join(self.path_plots, f'sig_ep{epoch}_s{i}.png')); plt.close()
-    
-    def plot_best_signals(self, path):
-        ckpt = torch.load(path, map_location=self.device)
-        self.model.load_state_dict(ckpt['model_state_dict'])
-        self.model.eval()
-        if self.val_loader is None: self.create_loaders(False)
-        for batch in self.val_loader:
-            xt, y, x0 = self._unpack(batch)
-            xt, y = xt.to(self.device).double(), y.to(self.device).double()
-            if x0 is None: x0 = y.sum(1,keepdim=True).repeat(1,self.N_dim)/(self.M_dim*self.N_dim)
-            dx = torch.zeros(1,self.N_dim).double().to(self.device); dy=torch.zeros(1,self.M_dim).double().to(self.device)
-            st = self.p3mg_tmp.init_P3MG(list(self.static_params), dx, dy)
-            with torch.no_grad(): xp, _, _ = self.model(st, None, x0, y)
-            plt.figure(figsize=(10,3))
-            plt.plot(xt[0].cpu().numpy())
-            plt.plot(xp[0].detach().cpu().numpy(), '--')
-            plt.title('Best Model')
-            plt.grid()
-            plt.savefig(os.path.join(self.path_plots, 'best_sig.png'))
-            plt.close(); break
-   
-    def plot_learned_params_evolution(self, path):
-        if not os.path.isfile(path): return
-        ckpt = torch.load(path, map_location=self.device)
-        self.model.load_state_dict(ckpt['model_state_dict'])
-        out_dir = os.path.join(os.path.dirname(os.path.dirname(path)), 'plots')
-        if not os.path.isdir(out_dir): out_dir = os.path.dirname(path)
-        S = nn.Softplus()
-        N, M = self.model.num_layers, self.model.num_pd_layers
-        lmbd_vals, tau_rows = [], []
-        dummy_y = torch.ones(1, self.M_dim).double().to(self.device)
-        dummy_x = torch.zeros(1, self.N_dim).double().to(self.device)
-        dummy_static = self.p3mg_tmp.init_P3MG(list(self.static_params), dummy_x, dummy_y) 
-        with torch.no_grad(): _, _, dl = self.model(dummy_static, None, dummy_x, dummy_y)
-        for k, layer in enumerate(self.model.Layers):
-            if k < len(dl): lmbd_vals.append(dl[k].squeeze().item())
-            if hasattr(layer, 'tau_k'): tau_rows.append(S(layer.tau_k).detach().cpu().numpy().flatten())
-        if lmbd_vals:
-            plt.figure(figsize=(10,6)); plt.plot(range(1, N+1), lmbd_vals, 'o-'); plt.savefig(os.path.join(out_dir, 'learnt_lambda_curve.png')); plt.close()
-        if tau_rows:
-            tau_mat = np.array(tau_rows)
-            plt.figure(figsize=(12, 6))
-            plt.imshow(tau_mat, aspect='auto', cmap='viridis', origin='lower', extent=[0.5, M+0.5, 0.5, N+0.5])
-            plt.colorbar()
-            plt.savefig(os.path.join(out_dir, 'learnt_tau_heatmap.png')); plt.close()
+        plot_signals_gs(self.path_save, self.path_logs, self.path_plots)

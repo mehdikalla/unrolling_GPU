@@ -83,10 +83,10 @@ def main():
     # 1. DÉTERMINER LE TYPE DE RUN
     if args.function == "train":
         run_type_folder = "unrolled"
-    elif args.function in ["test", "grid_search"]:
+    elif args.function == "grid_search":
         run_type_folder = "baseline"
-    else:
-        run_type_folder = "misc" 
+    elif args.function == "test":
+        run_type_folder = "network_test"
 
     # 2. CRÉER LE CHEMIN RACINE
     os.makedirs(args.save_dir, exist_ok=True)
@@ -221,9 +221,17 @@ def main():
     if args.function == "train":
         manager.train(need_names=False, checkpoint_path=ckpt, args_dict=vars(args))
         
+    # --- MODE TEST ---
     elif args.function == "test":
-        manager.test(need_names=False, checkpoint_path=ckpt)
-        
+        # EN FORCE : Si pas de resume ou fichier introuvable -> ERREUR
+        if not args.resume or not os.path.isfile(args.resume):
+            print(f"[ERREUR CRITIQUE] En mode 'test', vous DEVEZ fournir un chemin valide via --resume.")
+            print(f"Chemin reçu : {args.resume}")
+            sys.exit(1)
+            
+        print(f"[INFO] Mode Test : Chargement du modèle depuis {args.resume}")
+        manager.test(need_names=False, checkpoint_path=args.resume)
+
     elif args.function == "grid_search":
         gs_ckpt_path = args.gs_ckpt if (args.gs_ckpt and os.path.isfile(args.gs_ckpt)) else ckpt
         # Appel avec le mode pour que network.py sache s'il doit zipper ou croiser
