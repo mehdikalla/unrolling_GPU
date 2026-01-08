@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import json 
+from tqdm import tqdm
 import numpy as np
 
 from torch.utils.data import DataLoader
@@ -349,3 +350,150 @@ class U_P3MG(nn.Module):
                 json.dump({"lambda": l, "tau": t, "loss": loss}, f, indent=4)
 
         plot_signals_gs(self.path_save, self.path_logs, self.path_plots)
+
+    def solve_iterative_p3mg(self, y, x_true, lmbd_val, tau_val, max_iter=500):
+        """
+        Résout P3MG itératif sur GPU pour un batch complet.
+        Utilise les hyperparamètres fixes lmbd_val et tau_val.
+        """
+        device = self.device
+        
+        # Init variables statiques
+        # On utilise des dummies pour dx/dy car init_P3MG n'en a besoin que pour le type/device
+        dx_dummy = torch.zeros(1, self.N_dim).double().to(device)
+        dy_dummy = torch.zeros(1, self.M_dim).double().to(device)
+        
+        # Init x0 (ici x0 = y pour l'iteratif classique)
+        x = y.clone()
+        
+        # Calcul des matrices constantes (Hmat etc.) via P3MG_func
+        static_vars = self.p3mg_tmp.init_P3MG(list(self.static_params), dx_dummy, dy_dummy)
+        
+        # Formatage des hyperparamètres en tenseurs
+        current_lmbd = torch.tensor(lmbd_val, device=device).double()
+        # Le modèle attend une liste de Taus (un par 'couche' virtuelle), on duplique la valeur
+        tau_params_list = [torch.tensor(tau_val, device=device).double() for _ in range(self.num_pd_layers)]
+
+        # Boucle itérative (pas d'apprentissage, juste application de l'algo)
+        with torch.no_grad():
+            # Initialisation dynamique (itération 1)
+            x, dynamic = self.p3mg_tmp.iter_P3MG_base(static_vars, x, y, current_lmbd, tau_params_list)
+            
+            # Itérations suivantes
+            for k in range(1, max_iter):
+                x, dynamic = self.p3mg_tmp.iter_P3MG(static_vars, dynamic, x, y, current_lmbd, tau_params_list)
+        
+        return x
+
+def run_oracle_analysis(self, lambdas, taus, max_iter=500, mode="grid"):
+        """
+        Exécute l'analyse Oracle.
+        mode="grid"   : Teste toutes les combinaisons itertools.product(lambdas, taus)
+        mode="random" : Teste les paires zip(lambdas, taus)
+        """
+        from src.utils.visualization import plot_oracle_analysis, plot_oracle_reconstruction
+        import itertools
+        from tqdm import tqdm
+
+        # 1. Préparation
+        oracle_dir = os.path.join(self.path_save, "oracle")
+        os.makedirs(oracle_dir, exist_ok=True)
+        
+        # Définition de la liste des couples à tester
+        if mode == "random":
+            if len(lambdas) != len(taus):
+                raise ValueError(f"En mode random, len(lambdas) ({len(lambdas)}) doit égaler len(taus) ({len(taus)})")
+            # On forme les couples (L_i, T_i)
+            grid = list(zip(lambdas, taus))
+            desc_str = f"Random Search : {len(grid)} couples (L, T)"
+        else:
+            # Mode Grid classique
+            grid = list(itertools.product(lambdas, taus))
+            desc_str = f"Grid Search : {len(lambdas)} L x {len(taus)} T ({len(grid)} points)"
+
+        print(f"\n[ORACLE] Démarrage de l'analyse.")
+        print(f"         Sortie : {oracle_dir}")
+        print(f"         Mode   : {desc_str}")
+        print(f"         Iters  : {max_iter}")
+
+        # 2. Chargement Données (Batch Processing sur GPU)
+        if self.test_loader is None: self.create_loaders()
+        
+        all_X_true, all_Y = [], []
+        for batch in self.test_loader:
+            xt, y, _ = self._unpack(batch)
+            all_X_true.append(xt)
+            all_Y.append(y)
+            
+        X_true_all = torch.cat(all_X_true, dim=0).to(self.device).double()
+        Y_all      = torch.cat(all_Y, dim=0).to(self.device).double()
+        N_samples  = X_true_all.shape[0]
+
+        # 3. Trackers
+        best_mse = torch.full((N_samples,), float('inf'), device=self.device, dtype=torch.double)
+        # On initialise best_params à -1 pour repérer s'il y a un souci
+        best_params = torch.full((N_samples, 2), -1.0, device=self.device, dtype=torch.double) 
+
+        # 4. Boucle sur les couples
+        for (l_val, t_val) in tqdm(grid, desc="Oracle Loop"):
+            
+            # A. Résolution (Batch complet)
+            X_hat = self.solve_iterative_p3mg(Y_all, X_true_all, lmbd_val=l_val, tau_val=t_val, max_iter=max_iter)
+            
+            # B. Calcul MSE par signal
+            mse_curr = torch.mean((X_hat - X_true_all)**2, dim=1)
+            
+            # C. Mise à jour "Best Per Sample"
+            improved = mse_curr < best_mse
+            
+            if improved.any():
+                best_mse[improved] = mse_curr[improved]
+                best_params[improved, 0] = l_val
+                best_params[improved, 1] = t_val
+
+        # 5. Métriques Finales
+        sig_energy = torch.mean(X_true_all**2, dim=1)
+        best_snr_list = 10 * torch.log10(sig_energy / (best_mse + 1e-12))
+        
+        final_mse = torch.mean(best_mse).item()
+        final_snr = torch.mean(best_snr_list).item()
+
+        print("\n" + "="*40)
+        print(f" RÉSULTATS ORACLE ({mode.upper()})")
+        print("="*40)
+        print(f" MSE Mean : {final_mse:.4e}")
+        print(f" SNR Mean : {final_snr:.2f} dB")
+        print("="*40)
+
+        # 6. Sauvegardes
+        results_dict = {
+            "mode": mode,
+            "global_mse": final_mse,
+            "global_snr": final_snr,
+            "best_params_L": best_params[:, 0].cpu().tolist(),
+            "best_params_T": best_params[:, 1].cpu().tolist(),
+            "best_mses": best_mse.cpu().tolist()
+        }
+        torch.save(results_dict, os.path.join(oracle_dir, "oracle_data.pt"))
+        
+        # Plots
+        plot_oracle_analysis(best_params.cpu().numpy(), best_mse.cpu().numpy(), oracle_dir)
+        
+        # Reconstruction exemple (Best + Median)
+        best_idx_global = torch.argmin(best_mse).item()
+        median_idx_global = torch.argsort(best_mse)[N_samples // 2].item()
+        
+        for idx, lbl in zip([best_idx_global, median_idx_global], ["best_case", "median_case"]):
+            l_opt = best_params[idx, 0].item()
+            t_opt = best_params[idx, 1].item()
+            
+            # Relance uniquement pour ce signal
+            if l_opt > 0: # Check validité
+                y_s = Y_all[idx:idx+1]; xt_s = X_true_all[idx:idx+1]
+                x_o = self.solve_iterative_p3mg(y_s, xt_s, lmbd_val=l_opt, tau_val=t_opt, max_iter=max_iter)
+                plot_oracle_reconstruction(
+                    xt_s.squeeze().cpu().numpy(), y_s.squeeze().cpu().numpy(), x_o.squeeze().cpu().numpy(),
+                    l_opt, t_opt, oracle_dir, f"{lbl}_idx{idx}"
+                )
+                
+        print(f"[SUCCESS] Analyse Oracle terminée. Voir {oracle_dir}")

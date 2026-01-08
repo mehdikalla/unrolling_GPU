@@ -12,8 +12,8 @@ def parse_args():
         description="P3MG: entraînement ou test (GPU auto si dispo)"
     )
     # Mode : Uniquement les 3 modes principaux
-    p.add_argument("--function", type=str, choices=["train", "test", "grid_search"], default="train")
-
+    p.add_argument("--function", type=str, choices=["train", "test", "grid_search", "oracle"], default="train")
+    
     # Données
     p.add_argument("--dataset_dir", type=str, default="./Dataset")
     p.add_argument("--train", type=str, default="train.pt")
@@ -56,6 +56,20 @@ def parse_args():
     p.add_argument("--resume",   type=str, default=None)
     p.add_argument("--seed",     type=int, default=42)
 
+    # Paramètres spécifiques Oracle
+    p.add_argument("--oracle_random", action="store_true", help="Active le mode Random Search pour l'Oracle")
+    p.add_argument("--oracle_num_points", type=int, default=100, help="Nombre de couples (L, T) aléatoires à tester")
+    # Grille Lambda
+    p.add_argument("--oracle_min_exp", type=float, default=-5.0)
+    p.add_argument("--oracle_max_exp", type=float, default=-1.0)
+    p.add_argument("--oracle_n_lambda", type=int, default=15)
+    # Grille Tau
+    p.add_argument("--oracle_min_tau", type=float, default=0.1)
+    p.add_argument("--oracle_max_tau", type=float, default=1.9)
+    p.add_argument("--oracle_n_tau", type=int, default=15)
+    # Iterations
+    p.add_argument("--oracle_iter", type=int, default=10000, help="Nb itérations algo itératif")
+
     return p.parse_args()
 
 
@@ -88,6 +102,29 @@ def main():
         run_type_folder = "baseline"
     elif args.function == "test":
         run_type_folder = "network_test"
+    elif args.function == "oracle":
+        
+        if args.oracle_random:
+            print(f"[INFO] Mode Oracle Random Search activé.")
+            # 1. Génération Lambda (Log-Uniforme)
+            # On tire l'exposant uniformément entre min_exp et max_exp
+            raw_exps = np.random.uniform(args.oracle_min_exp, args.oracle_max_exp, args.oracle_num_points)
+            lambdas = (10**raw_exps).tolist()
+            
+            # 2. Génération Tau (Uniforme Linéaire)
+            taus = np.random.uniform(args.oracle_min_tau, args.oracle_max_tau, args.oracle_num_points).tolist()
+            
+            mode = "random"
+        else:
+            print(f"[INFO] Mode Oracle Grid Search activé.")
+            lambdas = np.logspace(args.oracle_min_exp, args.oracle_max_exp, args.oracle_n_lambda).tolist()
+            taus = np.linspace(args.oracle_min_tau, args.oracle_max_tau, args.oracle_n_tau).tolist()
+            mode = "grid"
+            
+            if args.gs_lambdas is not None:
+                lambdas = args.gs_lambdas
+
+        manager.run_oracle_analysis(lambdas, taus, max_iter=args.oracle_iter, mode=mode)
 
     # 2. CRÉER LE CHEMIN RACINE
     os.makedirs(args.save_dir, exist_ok=True)

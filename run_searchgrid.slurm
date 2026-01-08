@@ -29,4 +29,4 @@ python main.py \
     --gs_num_points 100 \
     --number_layers 1000 \
     --number_pd_layers 10 \
-    --random_search  
+    --random_search \       

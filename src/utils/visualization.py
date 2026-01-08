@@ -89,3 +89,67 @@ def plot_signals_gs(true, pred, l_val, t_val, path):
     plt.legend()
     plt.savefig(os.path.join(path, fname))
     plt.close()
+
+def plot_oracle_analysis(best_params, best_mses, oracle_dir):
+    """
+    Generates plots for the Oracle analysis.
+    - best_params: Array (N_samples, 2) containing [Lambda_opt, Tau_opt] for each signal.
+    - best_mses: Array (N_samples,) containing the optimal MSE for each signal.
+    - oracle_dir: Output directory.
+    """
+    import matplotlib.pyplot as plt
+    import os
+    import numpy as np
+
+    os.makedirs(oracle_dir, exist_ok=True)
+    
+    lambdas = best_params[:, 0]
+    taus = best_params[:, 1]
+    
+    # 1. Histogram of optimal Lambdas
+    plt.figure(figsize=(8, 5))
+    plt.hist(np.log10(lambdas), bins=20, color='teal', edgecolor='black', alpha=0.7)
+    plt.title("Distribution of Optimal Lambdas (per signal)")
+    plt.xlabel("Log10(Lambda)")
+    plt.ylabel("Number of signals")
+    plt.grid(axis='y', alpha=0.5)
+    plt.savefig(os.path.join(oracle_dir, "distrib_best_lambdas.png"))
+    plt.close()
+
+    # 2. Histogram of optimal Taus
+    plt.figure(figsize=(8, 5))
+    plt.hist(taus, bins=20, color='orange', edgecolor='black', alpha=0.7)
+    plt.title("Distribution of Optimal Taus (per signal)")
+    plt.xlabel("Tau")
+    plt.ylabel("Number of signals")
+    plt.grid(axis='y', alpha=0.5)
+    plt.savefig(os.path.join(oracle_dir, "distrib_best_taus.png"))
+    plt.close()
+    
+    # 3. 2D Scatter Plot (Winning parameter pairs)
+    plt.figure(figsize=(8, 6))
+    sc = plt.scatter(taus, np.log10(lambdas), c=best_mses, cmap='viridis', alpha=0.6, s=15)
+    plt.colorbar(sc, label='Best MSE')
+    plt.title("Map of Best Parameters (Lambda vs Tau)")
+    plt.xlabel("Tau")
+    plt.ylabel("Log10(Lambda)")
+    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.savefig(os.path.join(oracle_dir, "scatter_best_params.png"))
+    plt.close()
+    
+def plot_oracle_reconstruction(x_true, y_input, x_oracle, best_l, best_t, oracle_dir, index):
+    """
+    Plots a comparison: Noisy Signal vs Ground Truth vs Oracle Reconstruction
+    """
+    plt.figure(figsize=(12, 5))
+    # Plot only a part if it's too long, otherwise everything
+    plt.plot(x_true, 'k', label='Ground Truth', linewidth=1.5, alpha=0.8)
+    plt.plot(y_input, 'lightgray', label='Input (Noisy)', alpha=0.5)
+    plt.plot(x_oracle, 'r--', label=f'Oracle (L={best_l:.1e}, T={best_t:.2f})', linewidth=1.5)
+    
+    plt.title(f"Oracle Reconstruction - Signal #{index}")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(os.path.join(oracle_dir, f"oracle_signal_example_{index}.png"))
+    plt.close()
