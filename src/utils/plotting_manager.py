@@ -121,10 +121,10 @@ class PlottingManager:
         # Histogramme avec 50 bins
         plt.hist(losses, bins=50, color='skyblue', edgecolor='black', alpha=0.7)
         # Ligne rouge pour la moyenne
-        plt.axvline(mean_val, color='red', linestyle='dashed', linewidth=2, label=f'Moyenne: {mean_val:.2e}')
-        plt.title('Distribution des Erreurs (MSE) sur le Test Set')
+        plt.axvline(mean_val, color='red', linestyle='dashed', linewidth=2, label=f'Mean: {mean_val:.2e}')
+        plt.title('Test Set Error Distribution')
         plt.xlabel('Mean Squared Error')
-        plt.ylabel('Nombre d\'échantillons')
+        plt.ylabel('Number of Samples')
         plt.legend()
         plt.grid(axis='y', alpha=0.5)
         plt.tight_layout()
