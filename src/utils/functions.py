@@ -1,6 +1,6 @@
 from typing import Union, Optional
-import torch as tc
-import torch.nn as nn
+import tc as tc
+import tc.nn as nn
 
 class Max:
     r"""Compute the proximity operator and the evaluation of gamma*f.
@@ -106,7 +106,7 @@ class Max:
             return tc.sum(tc.max(x, dim=self.axis).values)
 
     def _check(self, x: tc.Tensor, gamma: tc.Tensor):
-        # Use torch.any instead of numpy.any.
+        # Use tc.any instead of numpy.any.
         if tc.any(gamma <= 0):
             raise ValueError(
                 "'gamma' (or all of its components if it is a tensor) must be strictly positive"
@@ -155,7 +155,7 @@ class Simplex:
     """
 
     def __init__(self, eta: Union[float, tc.Tensor], axis: Optional[int] = None):
-        # Convert eta to a torch tensor if necessary.
+        # Convert eta to a tc tensor if necessary.
         if not isinstance(eta, tc.Tensor):
             eta = tc.tensor(eta, dtype=tc.float64)
         if tc.any(eta <= 0):
@@ -348,11 +348,11 @@ def dosy_mat(N, M, tmin, tmax, Dmin, Dmax, dtype=tc.float64, device='cpu'):
         tmax (float): Maximum value for the time axis.
         Dmin (float): Minimum value for D.
         Dmax (float): Maximum value for D.
-        dtype (torch.dtype): PyTorch data type (default: torch.float64).
+        dtype (tc.dtype): Pytc data type (default: tc.float64).
         device (str): Device ('cpu' or 'cuda').
 
     Returns:
-        (torch.Tensor, torch.Tensor):
+        (tc.Tensor, tc.Tensor):
           - T: A tensor of shape (N,) containing the discrete D-values (log-spaced between Dmin and Dmax).
           - Hmat: A tensor of shape (M, N) created via a Kronecker-like operation with an exponential decay.
     """
@@ -378,3 +378,27 @@ def dosy_mat(N, M, tmin, tmax, Dmin, Dmax, dtype=tc.float64, device='cpu'):
     Hmat = tc.exp(-kron_t_T)
     return T, Hmat
 
+def snr_loss(self, output, target):
+    """
+    Exemple simple de loss basée sur le rapport signal sur bruit
+    SNR = 10 * log10(signal_power / noise_power)
+    Loss = -SNR (on veut maximiser SNR donc on minimise -SNR)
+    """
+    noise = target - output
+    signal_power = tc.mean(target ** 2)
+    noise_power = tc.mean(noise ** 2)
+    snr = 10 * tc.log10(signal_power / (noise_power + 1e-8))
+    return -snr  # on minimise -SNR
+
+def tsnr_loss(self, output, target):
+    """
+    Exemple de TSNR (time-averaged SNR)
+    """
+    batch_snr = []
+    for o, t in zip(output, target):
+        noise = t - o
+        signal_power = tc.mean(t ** 2)
+        noise_power = tc.mean(noise ** 2)
+        snr = 10 * tc.log10(signal_power / (noise_power + 1e-8))
+        batch_snr.append(snr)
+    return -tc.mean(tc.stack(batch_snr))  # on minimise -TSNR

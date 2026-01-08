@@ -30,6 +30,7 @@ def parse_args():
     p.add_argument("--eta",   type=float, default=1e-2)
 
     # Entraînement
+    p.add_argument("--Loss", type=str, default="MSE")
     p.add_argument("--epochs",           type=int,   default=25)
     p.add_argument("--lr",               type=float, default=5e-3)
     p.add_argument("--train_batch_size", type=int,   default=10)
@@ -212,7 +213,8 @@ def main():
         train_params=train_params,
         paths=(path_train, path_val, path_test, run_dir),
         device=str(device),
-        args_dict=vars(args)
+        args_dict=vars(args),
+        criterion=args.Loss
     )
 
     ckpt = args.resume if (args.resume and os.path.isfile(args.resume)) else None

@@ -12,11 +12,13 @@ from Dataset.module import MyDataset
 
 from src.models.P3MG_model import P3MG_model
 from src.models.P3MG_func import P3MGNet
+
+from src.utils.functions import snr_loss, tsnr_loss
 from src.utils.visualization import plot_signals_gs, plot_signals_gs 
 from src.utils.plotting_manager import PlottingManager
 
 class U_P3MG(nn.Module):
-    def __init__(self, num_layers, num_pd_layers, static_params, initial_x0, train_params, paths, device="cuda", args_dict=None):
+    def __init__(self, num_layers, num_pd_layers, static_params, initial_x0, train_params, paths, device="cuda", args_dict=None, criterion="MSE"):
         super().__init__()
         self.num_layers = num_layers
         self.num_pd_layers = num_pd_layers
@@ -40,8 +42,16 @@ class U_P3MG(nn.Module):
         if args_dict: self.save_config(args_dict)
 
         self.train_loader, self.val_loader, self.test_loader = None, None, None
-        self.criterion = nn.MSELoss(reduction="mean")
-        
+
+        if criterion == 'MSE':
+            self.criterion = nn.MSELoss(reduction='mean')
+        elif criterion == 'SNR':
+            self.criterion = snr_loss()
+        elif criterion == 'TSNR':
+            self.criterion = tsnr_loss()
+        else:
+            raise ValueError(f"Loss '{criterion}' non reconnue. Choisir parmi 'MSE', 'SNR', 'TSNR'.")
+    
         tau_params = [p for n, p in self.model.named_parameters() if 'tau_k' in n]
         other_params = [p for n, p in self.model.named_parameters() if 'tau_k' not in n]
         self.optimizer = optim.Adam([
